@@ -23,3 +23,25 @@ class OperationModelSerializer(serializers.ModelSerializer):
     class Meta:
         model = Operation
         fields = '__all__'
+
+
+
+class BatchTransactionItemSerializer(serializers.Serializer):
+    """Un élément d'une soumission par lot (texte uniquement — pas d'image/audio en lot pour l'instant)."""
+    text = serializers.CharField(required=True, allow_blank=False)
+    source = serializers.ChoiceField(choices=['WHATSAPP', 'MOBILE', 'API'], default='MOBILE')
+    client_ref = serializers.CharField(required=False, allow_blank=True)
+
+
+class BatchTransactionPayloadSerializer(serializers.Serializer):
+    """Validation d'une soumission par lot (app mobile hors-ligne -> sync)."""
+    transactions = BatchTransactionItemSerializer(many=True)
+
+    def validate_transactions(self, value):
+        if not value:
+            raise serializers.ValidationError("La liste de transactions ne peut pas être vide.")
+        if len(value) > 50:
+            raise serializers.ValidationError("Maximum 50 transactions par lot.")
+        return value
+
+
