@@ -8,8 +8,10 @@ from django.views.decorators.csrf import csrf_exempt
 from drf_spectacular.utils import extend_schema
 from dotenv import load_dotenv
 
-from apps.femi_agent.agent_manager import FemiAgentManager
+from apps.femi_agent.agent.manager import FemiAgentManager
+from apps.femi_account.models import Utilisateur
 
+from apps.femi_whatsapp.models import ProcessedMessage
 # Charger les variables du fichier .env
 load_dotenv()
 
@@ -61,19 +63,46 @@ class WhatsAppWebhookView(View):
                 from_number = message.get("from")  # Numéro de l'expéditeur
                 message_type = message.get("type")
 
-                # Traitement si c'est un message texte
+                  # Traitement si c'est un message texte
                 if message_type == "text":
-                    text_content = message.get("text", {}).get("body", "")
-                    print(f"\n[MESSAGE REÇU DE {from_number}] : {text_content}")
+                      text_content = message.get("text", {}).get("body", "")
+                      print(f"\n[MESSAGE REÇU DE {from_number}] : {text_content}")
 
-                    # 💥 APPEL DU CERVEAU CENTRAL (FemiAgentManager)
-                    result = FemiAgentManager.process_transaction_text(
-                        text_input=text_content,
-                        source="WHATSAPP"
-                    )
+                      # Protection idempotence : ignorer les retries Meta (même wamid déjà traité)
+                      wamid = message.get("id")
+                      if wamid:
+                          _, created = ProcessedMessage.objects.get_or_create(
+                              wamid=wamid,
+                              defaults={"from_number": from_number}
+                          )
+                          if not created:
+                              print(f"[RETRY IGNORÉ] wamid={wamid} déjà traité, aucune action.")
+                              return JsonResponse({"status": "duplicate_ignored"}, status=200)
 
-                    # Envoi de la réponse sur WhatsApp
-                    self._send_whatsapp_message(from_number, result.message)
+                      # Résolution de l'utilisateur via son numéro WhatsApp                
+
+                      # Résolution de l'utilisateur via son numéro WhatsApp
+                      # Meta envoie le numéro sans '+' (ex: "22890000000")
+                      normalized_number = from_number if from_number.startswith('+') else f"+{from_number}"
+                      utilisateur = Utilisateur.objects.filter(telephone_whatsapp=normalized_number).first()
+
+                      if not utilisateur:
+                          self._send_whatsapp_message(
+                              from_number,
+                              "⚠️ Numéro non reconnu. Merci de contacter votre administrateur pour associer ce numéro à votre compte Femi."
+                          )
+                          return JsonResponse({"status": "unknown_number"}, status=200)
+
+                      # 💥 APPEL DU CERVEAU CENTRAL (FemiAgentManager)
+                      result = FemiAgentManager.process_transaction_text(
+                          text_input=text_content,
+                          source="WHATSAPP",
+                          entreprise_id=utilisateur.entreprise.id if utilisateur.entreprise else None,
+                          utilisateur_id=utilisateur.id
+                      )
+
+                      # Envoi de la réponse sur WhatsApp
+                      self._send_whatsapp_message(from_number, result.message)       
 
             return JsonResponse({"status": "success"}, status=200)
 

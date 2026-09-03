@@ -1,0 +1,406 @@
+openapi: 3.0.3
+info:
+  title: Femi Financial API
+  version: 1.0.0
+  description: API REST pour l'agent financier et comptable Femi (Mobile & WhatsApp)
+paths:
+  /api/v1/auth/token/:
+    post:
+      operationId: v1_auth_token_create
+      description: 'Authentifie un utilisateur (username + password) et renvoie un
+        token à utiliser dans le header ''Authorization: Token <valeur>'' pour tous
+        les autres endpoints (sauf /health/).'
+      summary: Se connecter et obtenir un token
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                  example: test_api
+                password:
+                  type: string
+                  example: test1234
+              required:
+              - username
+              - password
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/dashboard/kpis/:
+    get:
+      operationId: v1_dashboard_kpis_retrieve
+      description: Renvoie les métriques financières agrégées (Chiffre d'affaires,
+        dépenses, bénéfice net, marge, top catégories) filtrées par période.
+      summary: Récupérer les KPIs du Dashboard
+      parameters:
+      - in: query
+        name: period
+        schema:
+          type: string
+          enum:
+          - last_month
+          - this_month
+          - this_year
+          - today
+          default: this_month
+        description: Période d'analyse des métriques
+      tags:
+      - v1
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/health/:
+    get:
+      operationId: v1_health_retrieve
+      description: |-
+        3. ENDPOINT HEALTHCHECK (GET)
+        Vérifie que l'API et la connexion à la base de données Supabase répondent.
+      tags:
+      - v1
+      responses:
+        '200':
+          description: No response body
+  /api/v1/transactions/batch/:
+    post:
+      operationId: v1_transactions_batch_create
+      description: Permet à l'app mobile de synchroniser plusieurs transactions saisies
+        hors-ligne (texte uniquement, 50 maximum par requête). Chaque item peut inclure
+        un 'client_ref' pour réconcilier les données côté app mobile.
+      summary: Soumettre des transactions par lot
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchTransactionPayload'
+        required: true
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/transactions/export/:
+    get:
+      operationId: v1_transactions_export_retrieve
+      description: Génère un export des opérations financières sur une période donnée,
+        au format PDF ou Excel (xlsx).
+      summary: Exporter les opérations (PDF ou Excel)
+      parameters:
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+        description: Date de début (YYYY-MM-DD)
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+        description: Date de fin (YYYY-MM-DD)
+      - in: query
+        name: export_format
+        schema:
+          type: string
+          enum:
+          - pdf
+          - xlsx
+          default: xlsx
+        description: Format du fichier exporté
+      tags:
+      - v1
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: string
+                format: binary
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/transactions/process/:
+    post:
+      operationId: v1_transactions_process_create
+      description: Reçoit une saisie utilisateur, l'analyse via l'agent et enregistre
+        la transaction ou renvoie une réponse.
+      summary: Traiter une entrée (Texte, Audio, Image)
+      tags:
+      - v1
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TransactionPayload'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TransactionPayload'
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransactionPayload'
+      security:
+      - tokenAuth: []
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationModel'
+          description: ''
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '500':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+components:
+  schemas:
+    BatchTransactionItem:
+      type: object
+      description: Un élément d'une soumission par lot (texte uniquement — pas d'image/audio
+        en lot pour l'instant).
+      properties:
+        text:
+          type: string
+        source:
+          allOf:
+          - $ref: '#/components/schemas/Source086Enum'
+          default: MOBILE
+        client_ref:
+          type: string
+      required:
+      - text
+    BatchTransactionPayload:
+      type: object
+      description: Validation d'une soumission par lot (app mobile hors-ligne -> sync).
+      properties:
+        transactions:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchTransactionItem'
+      required:
+      - transactions
+    OperationModel:
+      type: object
+      description: Format de sortie de l'opération enregistrée.
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        transaction_type:
+          $ref: '#/components/schemas/TransactionTypeEnum'
+        amount_ht:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+          nullable: true
+        tax_amount:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        amount_ttc:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        currency:
+          type: string
+          maxLength: 5
+        category:
+          type: string
+          maxLength: 100
+        vendor_or_client:
+          type: string
+          nullable: true
+          maxLength: 255
+        payment_method:
+          $ref: '#/components/schemas/PaymentMethodEnum'
+        transaction_date:
+          type: string
+          format: date
+          nullable: true
+        description:
+          type: string
+        confidence_score:
+          type: number
+          format: double
+        source:
+          $ref: '#/components/schemas/OperationModelSourceEnum'
+        raw_input_text:
+          type: string
+          nullable: true
+        receipt_image:
+          type: string
+          format: uri
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+        entreprise:
+          type: string
+          format: uuid
+        cree_par:
+          type: string
+          format: uuid
+          nullable: true
+      required:
+      - amount_ttc
+      - category
+      - created_at
+      - description
+      - entreprise
+      - id
+      - transaction_type
+      - updated_at
+    OperationModelSourceEnum:
+      enum:
+      - WHATSAPP
+      - MOBILE
+      - API
+      type: string
+      description: |-
+        * `WHATSAPP` - WhatsApp
+        * `MOBILE` - Application Mobile
+        * `API` - API Externe
+    PaymentMethodEnum:
+      enum:
+      - CASH
+      - BANK_TRANSFER
+      - MOBILE_MONEY
+      - CARD
+      - UNKNOWN
+      type: string
+      description: |-
+        * `CASH` - Espèces
+        * `BANK_TRANSFER` - Virement Bancaire
+        * `MOBILE_MONEY` - Mobile Money
+        * `CARD` - Carte Bancaire
+        * `UNKNOWN` - Inconnu
+    Source086Enum:
+      enum:
+      - WHATSAPP
+      - MOBILE
+      - API
+      type: string
+      description: |-
+        * `WHATSAPP` - WHATSAPP
+        * `MOBILE` - MOBILE
+        * `API` - API
+    TransactionPayload:
+      type: object
+      description: Validation de la requête entrante.
+      properties:
+        text:
+          type: string
+        image:
+          type: string
+          format: uri
+          nullable: true
+        audio:
+          type: string
+          format: uri
+          nullable: true
+        source:
+          allOf:
+          - $ref: '#/components/schemas/Source086Enum'
+          default: API
+    TransactionTypeEnum:
+      enum:
+      - RECETTE
+      - DEPENSE
+      type: string
+      description: |-
+        * `RECETTE` - Recette (Vente / Encaissement)
+        * `DEPENSE` - Dépense (Achat / Décaissement)
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sessionid
+    tokenAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: Token-based authentication with required prefix "Token"

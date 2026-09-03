@@ -1,13 +1,13 @@
 import json
 import requests
 
-WEBHOOK_URL = "http://127.0.0.1:8000/whatsapp/webhook/"
+WEBHOOK_URL = "http://127.0.0.1:8000/api/v1/whatsapp/webhook/"
 
 def test_whatsapp_verification():
     print("--- 1. Test de Vérification du Token Webhook (GET) ---")
     params = {
         "hub.mode": "subscribe",
-        "hub.verify_token": "femi_webhook_secret_token_123",
+        "hub.verify_token": "femi_secret_token_2026",
         "hub.challenge": "99887766"
     }
     response = requests.get(WEBHOOK_URL, params=params)

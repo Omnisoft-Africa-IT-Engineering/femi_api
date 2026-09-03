@@ -1,7 +1,7 @@
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from apps.femi_agent.schemas import TransactionExtracted
-from apps.femi_agent.prompts import ACCOUNTING_SYSTEM_PROMPT
+from apps.femi_agent.agent.prompts.accounting_prompt import ACCOUNTING_SYSTEM_PROMPT
 
 def get_femi_agent(model_name: str = "mistral"):
     """Instancie la chaîne LangChain configurée avec sortie Pydantic forcée."""
