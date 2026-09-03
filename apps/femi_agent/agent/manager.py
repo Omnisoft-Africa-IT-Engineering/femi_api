@@ -3,10 +3,10 @@ from django.utils import timezone
 from django.db.models import Sum
 from decimal import Decimal
 
-from apps.femi_account.models import Operation, Entreprise
+from apps.femi_account.models import Operation, Entreprise, Utilisateur
 from apps.femi_agent.pipeline import run_ai_extraction
 from apps.femi_agent.schemas import ProcessResult
-from apps.femi_agent.sheets_exporter import GoogleSheetsExporter
+from apps.femi_agent.integrations.sheets_exporter import GoogleSheetsExporter
 
 
 class FemiAgentManager:
@@ -23,7 +23,8 @@ class FemiAgentManager:
         audio_bytes: Optional[bytes] = None,
         image_file=None,
         source: str = "API",
-        entreprise_id: Optional[int] = None
+        entreprise_id: Optional[int] = None,
+        utilisateur_id: Optional[int] = None
     ) -> ProcessResult:
         """
         Analyse la requête utilisateur et choisit le traitement adapté :
@@ -39,6 +40,8 @@ class FemiAgentManager:
                 entreprise = Entreprise.objects.first()
                 if not entreprise:
                     entreprise = Entreprise.objects.create(nom="Entreprise Principale", devise="XOF")
+            # Récupération de l'utilisateur créateur (optionnel)
+            utilisateur = Utilisateur.objects.filter(id=utilisateur_id).first() if utilisateur_id else None
 
             # 2. Détection des salutations
             if text_input and cls._is_greeting(text_input):
@@ -54,17 +57,16 @@ class FemiAgentManager:
                 return cls._handle_analytical_query(text_input, entreprise)
 
             # 4. Enregistrement d'une transaction
-            if image_bytes or audio_bytes:
-                parsed_data = run_ai_extraction(
-                    text_input=text_input,
-                    image_bytes=image_bytes,
-                    audio_bytes=audio_bytes
-                )
-            else:
-                parsed_data = run_ai_extraction(text_input)
+                      
+            parsed_data = run_ai_extraction(
+                text_input=text_input,
+                image_bytes=image_bytes,
+                audio_bytes=audio_bytes,
+            )
 
             operation = Operation.objects.create(
                 entreprise=entreprise,
+                cree_par=utilisateur,
                 transaction_type=parsed_data.transaction_type,
                 amount_ht=parsed_data.amount_ht or parsed_data.amount_ttc,
                 tax_amount=parsed_data.tax_amount or 0,

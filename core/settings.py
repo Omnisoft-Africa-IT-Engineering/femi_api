@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
 from pathlib import Path
+from decouple import config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -40,12 +41,14 @@ INSTALLED_APPS = [
     
     # Framework d'API REST
     'rest_framework',
+    'rest_framework.authtoken',
     'drf_spectacular',
     # Vos 5 applications métiers Femi
     'apps.femi_agent',     # Moteur IA, LangChain, OCR, STT
     'apps.femi_account',   # Base de données comptable et modèles
     'apps.femi_api',       # API REST partagée
     'apps.femi_whatsapp',  # Integrations & Webhooks WhatsApp
+    
     
 ]
 
@@ -149,6 +152,10 @@ AUTH_USER_MODEL = 'femi_account.Utilisateur'
 
 REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.TokenAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+    ],
 }
 
 SPECTACULAR_SETTINGS = {
@@ -165,3 +172,12 @@ ALLOWED_HOSTS = ['127.0.0.1', 'localhost', '.ngrok-free.dev', '.ngrok-free.app']
 
 # Option 2 : Autoriser tous les hôtes en environnement de développement
 ALLOWED_HOSTS = ['*']
+
+FEMI_LLM_MODEL = config("FEMI_LLM_MODEL", default="mistral")
+OLLAMA_BASE_URL = config("OLLAMA_BASE_URL", default="http://localhost:11434")
+
+# settings.py
+
+CSRF_TRUSTED_ORIGINS = [
+    'https://epidermal-slum-shame.ngrok-free.dev',
+]

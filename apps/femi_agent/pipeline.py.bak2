@@ -4,8 +4,6 @@ from decimal import Decimal
 
 from apps.femi_agent.schemas import ParsedOperationSchema
 from apps.femi_agent.agent.executor import analyze_accounting_text, AgentExecutionError
-from apps.femi_agent.parsers.ocr_parser import extract_text_from_image
-from apps.femi_agent.parsers.audio_parser import transcribe_audio
 
 logger = logging.getLogger(__name__)
 
@@ -23,52 +21,22 @@ PAYMENT_METHOD_KEYWORDS = {
 }
 
 
-def run_ai_extraction(
-    text_input: str = None,
-    image_bytes: bytes = None,
-    audio_bytes: bytes = None,
-) -> ParsedOperationSchema:
+def run_ai_extraction(text_input: str) -> ParsedOperationSchema:
     """
-    Analyse la saisie utilisateur via l'agent LangChain (Ollama en local).
-    Convertit image_bytes (OCR) et/ou audio_bytes (Whisper) en texte,
-    combine avec text_input si présent, puis analyse le texte résultant.
+    Analyse le texte utilisateur via l'agent LangChain (Ollama en local).
     Bascule automatiquement sur un analyseur local de secours (regex)
     si le LLM n'est pas disponible ou échoue.
     """
-    extracted_parts = []
-
-    if text_input and text_input.strip():
-        extracted_parts.append(text_input.strip())
-
-    if image_bytes is not None:
-        try:
-            ocr_text = extract_text_from_image(image_bytes)
-            if ocr_text:
-                extracted_parts.append(ocr_text)
-        except ValueError as e:
-            raise AgentExecutionError(f"Échec de l'extraction OCR : {e}") from e
-
-    if audio_bytes is not None:
-        try:
-            audio_text = transcribe_audio(audio_bytes)
-            if audio_text:
-                extracted_parts.append(audio_text)
-        except Exception as e:
-            raise AgentExecutionError(f"Échec de la transcription audio : {e}") from e
-
-    combined_text = "\n".join(extracted_parts).strip()
-
-    if not combined_text:
-        raise AgentExecutionError("Aucun texte exploitable fourni.")
-
     try:
-        return analyze_accounting_text(combined_text)
+        return analyze_accounting_text(text_input)
     except AgentExecutionError as e:
         logger.warning(f"Extraction LLM échouée, bascule sur le fallback regex : {e}")
-        return _fallback_parser(combined_text)
+        return _fallback_parser(text_input)
     except Exception as e:
+        # Sécurité supplémentaire : toute erreur inattendue (Ollama injoignable, etc.)
+        # ne doit jamais faire planter le pipeline complet.
         logger.error(f"Erreur inattendue lors de l'extraction LLM : {e}")
-        return _fallback_parser(combined_text)
+        return _fallback_parser(text_input)
 
 
 def _detect_category(text_lower: str, is_recette: bool) -> str:
