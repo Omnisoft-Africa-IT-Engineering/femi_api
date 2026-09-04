@@ -26,3 +26,5 @@ staticfiles/
 _archives/
 credentials.json
 credentials.json
+credentials.json
+.env
