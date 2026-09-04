@@ -154,6 +154,12 @@ class DashboardKPIAPIView(APIView):
         profit = revenue - expenses
         margin = (profit / revenue * 100) if revenue > 0 else Decimal('0.00')
 
+        # Nombre de clients uniques (basé sur vendor_or_client, texte libre)
+        unique_clients_count = ops.filter(transaction_type="RECETTE") \
+            .exclude(vendor_or_client__isnull=True) \
+            .exclude(vendor_or_client__exact='') \
+            .values('vendor_or_client').distinct().count()
+
         # Top 3 des catégories de dépenses
         top_categories = ops.filter(transaction_type="DEPENSE") \
                             .values('category') \
@@ -165,6 +171,18 @@ class DashboardKPIAPIView(APIView):
             'id', 'transaction_type', 'amount_ttc', 'category', 'transaction_date'
         )
 
+        # --- Tendances : comparaison avec la période précédente ---
+        prev_ops = self._get_previous_period_ops(entreprise, period, now)
+        prev_revenue = prev_ops.filter(transaction_type="RECETTE").aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
+        prev_expenses = prev_ops.filter(transaction_type="DEPENSE").aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
+        prev_profit = prev_revenue - prev_expenses
+
+        # --- Trésorerie : solde cumulé sur TOUTE l'historique de l'entreprise ---
+        all_ops = Operation.objects.filter(entreprise=entreprise)
+        total_in = all_ops.filter(transaction_type="RECETTE").aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
+        total_out = all_ops.filter(transaction_type="DEPENSE").aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
+        treasury_balance = total_in - total_out
+
         return Response({
             "period": period,
             "currency": entreprise.devise or "XOF",
@@ -174,12 +192,58 @@ class DashboardKPIAPIView(APIView):
                 "net_profit": float(profit),
                 "profit_margin_percentage": round(float(margin), 2),
                 "average_sale_amount": round(float(avg_sale), 2),
-                "total_transactions_count": ops.count()
+                "total_transactions_count": ops.count(),
+                "unique_clients_count": unique_clients_count
+            },
+            "trends": {
+                "revenue_change_percentage": self._pct_change(revenue, prev_revenue),
+                "expenses_change_percentage": self._pct_change(expenses, prev_expenses),
+                "profit_change_percentage": self._pct_change(profit, prev_profit),
+            },
+            "treasury": {
+                "balance": float(treasury_balance),
+                "as_of": now.isoformat()
             },
             "top_expense_categories": list(top_categories),
             "recent_transactions": list(recent_ops)
         }, status=status.HTTP_200_OK)
-        
+
+    def _get_previous_period_ops(self, entreprise, period, now):
+        """
+        Retourne le queryset des opérations de la période PRÉCÉDENTE
+        (pour calculer les tendances vs total_revenue/expenses/profit actuels).
+        """
+        ops = Operation.objects.filter(entreprise=entreprise)
+
+        if period == 'today':
+            yesterday = now.date() - timezone.timedelta(days=1)
+            return ops.filter(transaction_date=yesterday)
+
+        elif period == 'this_month':
+            month = 12 if now.month == 1 else now.month - 1
+            year = now.year - 1 if now.month == 1 else now.year
+            return ops.filter(transaction_date__year=year, transaction_date__month=month)
+
+        elif period == 'last_month':
+            ref_month = 12 if now.month == 1 else now.month - 1
+            ref_year = now.year - 1 if now.month == 1 else now.year
+            month = 12 if ref_month == 1 else ref_month - 1
+            year = ref_year - 1 if ref_month == 1 else ref_year
+            return ops.filter(transaction_date__year=year, transaction_date__month=month)
+
+        elif period == 'this_year':
+            return ops.filter(transaction_date__year=now.year - 1)
+
+        return ops.none()
+
+    def _pct_change(self, current, previous):
+        """
+        Calcule le % de variation entre deux valeurs Decimal.
+        Retourne None si les deux valeurs sont nulles (pas de comparaison pertinente).
+        """
+        if previous == 0:
+            return None if current == 0 else 100.0
+        return round(float((current - previous) / previous * 100), 2)
 
 
 class HealthCheckAPIView(APIView):

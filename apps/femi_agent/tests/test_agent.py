@@ -51,6 +51,26 @@ class FemiAgentManagerTestCase(TestCase):
         self.assertIn("5 000", result.message.replace("\u202f", " ").replace(",", " "))
         self.assertEqual(Operation.objects.count(), 2)
 
+    def test_combien_j_ai_vendu_is_detected_as_analytical_query(self):
+        """
+        Non-régression : bug où le .replace("'", "' ") cassait le matching
+        du mot-clé "combien j'ai" en insérant un espace après l'apostrophe.
+        """
+        self.assertTrue(
+            FemiAgentManager._is_analytical_query("Combien j'ai vendu ce mois-ci ?")
+        )
+
+    def test_comment_j_ai_vendu_is_detected_as_analytical_query(self):
+        """Cas observé en conditions réelles via WhatsApp (retry inclus dans les logs de session)."""
+        self.assertTrue(
+            FemiAgentManager._is_analytical_query("Comment j'ai vendu aujourd'hui ??")
+        )
+
+    def test_transaction_text_not_detected_as_analytical(self):
+        """Garde-fou : un texte de transaction classique ne doit jamais être mal classé."""
+        self.assertFalse(
+            FemiAgentManager._is_analytical_query("Vente de 1 sac à 3000")
+        )
     @patch("apps.femi_agent.agent.manager.GoogleSheetsExporter")
     @patch("apps.femi_agent.agent.manager.run_ai_extraction")
     def test_recette_creates_operation_and_returns_instance(self, mock_extraction, mock_sheets):

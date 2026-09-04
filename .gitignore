@@ -24,3 +24,4 @@ staticfiles/
 # Backups locaux
 *.bak
 _archives/
+credentials.json
