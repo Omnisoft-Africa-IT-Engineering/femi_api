@@ -25,3 +25,4 @@ staticfiles/
 *.bak
 _archives/
 credentials.json
+credentials.json
