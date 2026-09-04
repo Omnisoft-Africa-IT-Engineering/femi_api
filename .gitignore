@@ -24,3 +24,10 @@ staticfiles/
 # Backups locaux
 *.bak
 _archives/
+<<<<<<< HEAD
+=======
+credentials.json
+credentials.json
+credentials.json
+.env
+>>>>>>> b302b58d6a21a860e9330a836cc90e0bde835d43

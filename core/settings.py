@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
+import os
 from pathlib import Path
 from decouple import config
 
@@ -26,7 +27,7 @@ SECRET_KEY = "django-insecure-k*^^n_ssjekw7jiako25_k6+)4(h_-x(jkt$h(03qhkocg9b^f
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['*']
 
 
 # Application definition
@@ -39,20 +40,25 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     
+    # En-têtes CORS (Pour Flutter Web & clients externes)
+    'corsheaders',
+    
     # Framework d'API REST
     'rest_framework',
     'rest_framework.authtoken',
     'drf_spectacular',
+    
     # Vos 5 applications métiers Femi
     'apps.femi_agent',     # Moteur IA, LangChain, OCR, STT
     'apps.femi_account',   # Base de données comptable et modèles
     'apps.femi_api',       # API REST partagée
     'apps.femi_whatsapp',  # Integrations & Webhooks WhatsApp
-    
-    
 ]
 
 MIDDLEWARE = [
+    # CorsMiddleware doit impérativement précéder tout middleware renvoyant des réponses
+    'corsheaders.middleware.CorsMiddleware',
+    
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -61,6 +67,11 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
+
+# --- CONFIGURATION CORS ---
+CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True
+
 
 ROOT_URLCONF = "core.urls"
 
@@ -85,15 +96,13 @@ WSGI_APPLICATION = "core.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
-import os
-
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'postgres',
         'USER': 'postgres.ammhukotgebwmpibpycm',
-        'PASSWORD': '(Femi-db)2026',  # Remplacez par votre mot de passe Supabase
-        'HOST': 'aws-1-eu-west-1.pooler.supabase.com',   # Remplacez par votre Host Supabase
+        'PASSWORD': '(Femi-db)2026',  # Mot de passe Supabase
+        'HOST': 'aws-1-eu-west-1.pooler.supabase.com',   # Host Supabase
         'PORT': '6543',
         'OPTIONS': {
             'sslmode': 'require',  # Requis pour la connexion sécurisée à Supabase
@@ -167,17 +176,11 @@ SPECTACULAR_SETTINGS = {
 
 WHATSAPP_VERIFY_TOKEN = "femi_secret_token_2026"
 
-# Option 1 : Autoriser spécifiquement les sous-domaines ngrok (Recommandé)
-ALLOWED_HOSTS = ['127.0.0.1', 'localhost', '.ngrok-free.dev', '.ngrok-free.app']
-
-# Option 2 : Autoriser tous les hôtes en environnement de développement
-ALLOWED_HOSTS = ['*']
-
 FEMI_LLM_MODEL = config("FEMI_LLM_MODEL", default="mistral")
 OLLAMA_BASE_URL = config("OLLAMA_BASE_URL", default="http://localhost:11434")
 
-# settings.py
-
 CSRF_TRUSTED_ORIGINS = [
     'https://epidermal-slum-shame.ngrok-free.dev',
+    'http://localhost:8000',
+    'http://127.0.0.1:8000',
 ]
