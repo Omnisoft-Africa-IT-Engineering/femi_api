@@ -4,7 +4,7 @@ from apps.femi_account.models import Entreprise, Utilisateur, Operation
 
 @admin.register(Entreprise)
 class EntrepriseAdmin(admin.ModelAdmin):
-    list_display = ('nom', 'rccm', 'ifu', 'regime_fiscal', 'devise', 'created_at')
+    list_display = ('nom', 'rccm', 'ifu', 'regime_fiscal', 'devise', 'created_at','adresse')
     search_fields = ('nom', 'rccm', 'ifu')
 
 @admin.register(Utilisateur)
