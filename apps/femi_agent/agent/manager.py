@@ -64,8 +64,6 @@ class FemiAgentManager:
                 audio_bytes=audio_bytes,
             )
 
-<<<<<<< HEAD
-=======
             # Garde-fou : rejette les extractions incohérentes (montant nul)
             # pour éviter de créer une fausse transaction sur une question hors-sujet.
             if parsed_data.amount_ttc <= 0:
@@ -79,7 +77,6 @@ class FemiAgentManager:
                     operation_instance=None
                 )      
 
->>>>>>> b302b58d6a21a860e9330a836cc90e0bde835d43
             operation = Operation.objects.create(
                 entreprise=entreprise,
                 cree_par=utilisateur,
@@ -145,11 +142,7 @@ class FemiAgentManager:
     @classmethod
     def _is_analytical_query(cls, text: str) -> bool:
         """Détecte si l'utilisateur pose une question de consultation/bilan."""
-<<<<<<< HEAD
-        text_clean = " ".join(text.lower().replace("'", "' ").split())
-=======
         text_clean = " ".join(text.lower().split())
->>>>>>> b302b58d6a21a860e9330a836cc90e0bde835d43
         
         # Mots-clés explicites de consultation (évite les mots isolés comme 'vendu')
         keywords = [
