@@ -1,0 +1,68 @@
+Django
+djangorestframework
+drf-spectacular
+
+# Base de données / fichiers
+et-xmlfile
+openpyxl
+
+# HTTP / réseau
+httpx
+httpcore
+httpx-sse
+h11
+idna
+
+# Templates / utilitaires
+Jinja2
+MarkupSafe
+filelock
+frozenlist
+multidict
+more-itertools
+inflection
+jsonpatch
+jsonpointer
+
+# Validation JSON
+jsonschema
+jsonschema-specifications
+
+# LangChain
+langchain
+langchain-classic
+langchain-community
+langchain-core
+langchain-ollama
+langchain-protocol
+langchain-text-splitters
+
+# LangGraph
+langgraph
+langgraph-checkpoint
+langgraph-prebuilt
+langgraph-sdk
+
+# LangSmith
+langsmith
+
+# Calcul scientifique
+numpy
+numba
+llvmlite
+mpmath
+networkx
+
+# Google
+google-auth
+google-auth-oauthlib
+gspread
+
+# Git
+git-filter-repo
+
+# XML
+lxml
+
+# Greenlet
+greenlet
