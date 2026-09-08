@@ -175,14 +175,25 @@ SPECTACULAR_SETTINGS = {
 }
 
 WHATSAPP_VERIFY_TOKEN = "femi_secret_token_2026"
+WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN")
+WHATSAPP_APP_SECRET = config("WHATSAPP_APP_SECRET")
+WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN")
+WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
 
 FEMI_LLM_MODEL = config("FEMI_LLM_MODEL", default="mistral")
 OLLAMA_BASE_URL = config("OLLAMA_BASE_URL", default="http://localhost:11434")
 
 CSRF_TRUSTED_ORIGINS = [
     'https://epidermal-slum-shame.ngrok-free.dev',
-    'http://localhost:8000',
-    'http://127.0.0.1:8000',
 ]
 
-  
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = "Africa/Lome"  # ajuste selon ton TIME_ZONE Django
+
+# Fiabilité : évite qu'un worker qui crash ne perde une tâche en cours
+CELERY_TASK_ACKS_LATE = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
