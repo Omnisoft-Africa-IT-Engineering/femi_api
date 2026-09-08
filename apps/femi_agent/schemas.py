@@ -2,22 +2,15 @@ from decimal import Decimal
 from typing import Optional, Any, Any
 from pydantic import BaseModel, Field, ConfigDict, ConfigDict
 
-<<<<<<< HEAD
-=======
 from typing import Literal
 # ...
->>>>>>> b302b58d6a21a860e9330a836cc90e0bde835d43
 
 class LLMExtractionSchema(BaseModel):
     """Schéma de sortie STRICTEMENT pour le LLM (Ollama structured output).
     Utilise float au lieu de Decimal car Ollama ne parse pas correctement
     la grammaire GBNF générée pour Decimal. Converti en ParsedOperationSchema
     juste après l'appel LLM (voir executor.py)."""
-<<<<<<< HEAD
-    transaction_type: str = Field(description="'RECETTE' ou 'DEPENSE'")
-=======
     transaction_type: Literal["RECETTE", "DEPENSE"] = Field(description="'RECETTE' ou 'DEPENSE'")
->>>>>>> b302b58d6a21a860e9330a836cc90e0bde835d43
     amount_ttc: float = Field(description="Montant total de la transaction")
     amount_ht: Optional[float] = Field(default=None, description="Montant HT si identifiable")
     tax_amount: Optional[float] = Field(default=None, description="Montant de la TVA/Taxe")
@@ -32,11 +25,7 @@ class LLMExtractionSchema(BaseModel):
 
 class ParsedOperationSchema(BaseModel):
     """Structure de données standardisée retournée par l'analyse IA."""
-<<<<<<< HEAD
-    transaction_type: str = Field(description="'RECETTE' ou 'DEPENSE'")
-=======
     transaction_type: Literal["RECETTE", "DEPENSE"] = Field(description="'RECETTE' ou 'DEPENSE'")
->>>>>>> b302b58d6a21a860e9330a836cc90e0bde835d43
     amount_ttc: Decimal = Field(description="Montant total de la transaction")
     amount_ht: Optional[Decimal] = Field(default=None, description="Montant HT si identifiable")
     tax_amount: Optional[Decimal] = Field(default=None, description="Montant de la TVA/Taxe")
