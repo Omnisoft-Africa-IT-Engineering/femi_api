@@ -179,6 +179,9 @@ class DashboardKPITests(FemiAPITestCase):
         self.assertEqual(response.data["kpis"]["total_expenses"], 3000.0)
         self.assertEqual(response.data["kpis"]["net_profit"], 7000.0)
 
+<<<<<<< HEAD
+
+=======
     def _previous_month_date(self, today):
         """Retourne une date arbitraire dans le mois précédent (jour 10, sans risque de dépassement)."""
         month = 12 if today.month == 1 else today.month - 1
@@ -258,6 +261,7 @@ class DashboardKPITests(FemiAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         # 2 clients distincts : Patricia (x2) et Kossi (x1)
         self.assertEqual(response.data["kpis"]["unique_clients_count"], 2)
+>>>>>>> b302b58d6a21a860e9330a836cc90e0bde835d43
 class ExportTransactionTests(FemiAPITestCase):
 
     def setUp(self):

@@ -57,6 +57,61 @@ class WhatsAppWebhookView(View):
             logger.exception("Payload webhook WhatsApp illisible.")
             return JsonResponse({"status": "invalid_payload"}, status=400)
 
+            if not media_url:
+                print(f"[ERREUR MEDIA] : Aucune URL retournée pour media_id={media_id}")
+                return None
+
+            media_response = requests.get(media_url, headers=headers)
+            media_response.raise_for_status()
+            return media_response.content, mime_type
+
+        except requests.exceptions.RequestException as e:
+            print(f"[ERREUR TÉLÉCHARGEMENT MEDIA] : {str(e)}")
+            return None
+
+    def _extension_from_mime(self, mime_type: str) -> str:
+        """Déduit une extension de fichier à partir du mime_type retourné par Meta."""
+        mapping = {
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/webp": ".webp",
+        }
+        return mapping.get(mime_type, ".jpg")
+
+        """
+        Télécharge un média WhatsApp (image ou audio) en 2 étapes :
+        1. Résout l'URL temporaire du média via son media_id
+        2. Télécharge le contenu binaire depuis cette URL
+        Retourne les bytes, ou None en cas d'échec.
+        """
+        access_token = os.getenv("WHATSAPP_ACCESS_TOKEN", "").strip()
+        if not access_token:
+            print("[ERREUR MEDIA] : WHATSAPP_ACCESS_TOKEN non configuré.")
+            return None
+
+        headers = {"Authorization": f"Bearer {access_token}"}
+
+        try:
+            meta_url = f"https://graph.facebook.com/v19.0/{media_id}"
+            response = requests.get(meta_url, headers=headers)
+            response.raise_for_status()
+            media_url = response.json().get("url")
+
+            if not media_url:
+                print(f"[ERREUR MEDIA] : Aucune URL retournée pour media_id={media_id}")
+                return None
+
+            media_response = requests.get(media_url, headers=headers)
+            media_response.raise_for_status()
+            return media_response.content
+
+        except requests.exceptions.RequestException as e:
+            print(f"[ERREUR TÉLÉCHARGEMENT MEDIA] : {str(e)}")
+            return None
+        """
+        Étape 2 : Réception du message WhatsApp envoyé par l'utilisateur.
+        """
+        main
         try:
             self._dispatch(body)
         except Exception:
