@@ -7,7 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from django.utils import timezone
-from django.db.models import Sum, Avg
+from django.db.models import Sum, Avg, Q
 from decimal import Decimal
 
 # Importations DRF-Spectacular pour Swagger OAS 3.0
@@ -23,7 +23,10 @@ from apps.femi_api.serializers import (
     BatchTransactionPayloadSerializer,
 )
 from apps.femi_agent.agent.manager import FemiAgentManager
-from apps.femi_account.models import Operation, Entreprise
+from apps.femi_account.models import Kpi, Niveau, Contact
+from apps.femi_account.models import Operation, Entreprise, PrestationRealisee, Utilisateur, WhatsAppLinkRequest
+from apps.femi_whatsapp.whatsapp_client import WhatsAppClient
+from apps.femi_whatsapp.tasks import _normalize_phone
 
 
 class ProcessTransactionAPIView(APIView):
@@ -972,50 +975,490 @@ class LoginAPIView(APIView):
 
     def _handle_post(self, request, *args, **kwargs):
 
-        username = request.data.get('username')
+        identifiant = request.data.get('identifiant') or request.data.get('username')
         password = request.data.get('password')
 
-        if not username or not password:
-
+        if not identifiant or not password:
             return Response(
-                {
-                    "error": (
-                        "username et password sont requis."
-                    )
-                },
+                {"error": "identifiant et password sont requis."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        user = authenticate(
-            username=username,
-            password=password
-        )
+        resolved_username = identifiant
+        if '@' in identifiant:
+            utilisateur = Utilisateur.objects.filter(email__iexact=identifiant).first()
+            if utilisateur:
+                resolved_username = utilisateur.username
+
+        user = authenticate(username=resolved_username, password=password)
 
         if not user:
-
             return Response(
-                {
-                    "error": "Identifiants invalides."
-                },
+                {"error": "Identifiants invalides."},
                 status=status.HTTP_401_UNAUTHORIZED
             )
 
-        token, _ = Token.objects.get_or_create(
-            user=user
-        )
+        token, _ = Token.objects.get_or_create(user=user)
 
         return Response({
             "token": token.key,
             "utilisateur_id": str(user.id),
             "role": user.role,
             "entreprise_id": (
-                str(user.entreprise.id)
-                if user.entreprise
-                else None
+                str(user.entreprise.id) if user.entreprise else None
             ),
             "entreprise_nom": (
-                user.entreprise.nom
-                if user.entreprise
-                else None
+                user.entreprise.nom if user.entreprise else None
             ),
         })
+
+class LogoutAPIView(APIView):
+    """
+    Déconnexion : supprime le token DRF de l'utilisateur authentifié.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    if HAS_SPECTACULAR:
+        @extend_schema(
+            summary="Se déconnecter",
+            description="Supprime le token DRF courant de l'utilisateur authentifié.",
+            responses={
+                200: OpenApiTypes.OBJECT,
+                401: OpenApiTypes.OBJECT,
+            }
+        )
+        def post(self, request, *args, **kwargs):
+            return self._handle_post(request, *args, **kwargs)
+    else:
+        def post(self, request, *args, **kwargs):
+            return self._handle_post(request, *args, **kwargs)
+
+    def _handle_post(self, request, *args, **kwargs):
+        Token.objects.filter(user=request.user).delete()
+        return Response(
+            {"message": "Déconnexion réussie."},
+            status=status.HTTP_200_OK,
+        )
+
+
+class KpiNiveauAPIView(APIView):
+    """
+    6. ENDPOINT KPI PAR NIVEAU (GET)
+    Renvoie les KPI du catalogue (modèle Kpi) pour un niveau donné,
+    filtrés selon le secteur de l'entreprise, avec leur valeur calculée
+    quand une fonction de calcul existe pour ce KPI.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    # Registre des calculateurs, indexé par le nom exact du Kpi en base.
+    # Chaque fonction reçoit (entreprise, ops_periode, toutes_ops) et
+    # renvoie la valeur calculée.
+    def _calculateurs(self):
+        return {
+            "Chiffre d'affaires": self._calc_chiffre_affaires,
+            "Bénéfice": self._calc_benefice,
+            "Marge": self._calc_marge,
+            "Dépenses": self._calc_depenses,
+            "Trésorerie": self._calc_tresorerie,
+            "Clients": self._calc_clients,
+            "Créances": self._calc_creances,
+            "Prêts accordés": self._calc_prets_accordes,
+            "Dettes": self._calc_dettes,
+            "Ventes": self._calc_nombre_ventes,
+            "Panier moyen": self._calc_panier_moyen,
+            "Nombre de prestations": self._calc_nombre_prestations,
+            "Heures facturées": self._calc_heures_facturees,
+            "Marge par prestation": self._calc_marge_par_prestation,
+        }
+
+    if HAS_SPECTACULAR:
+        @extend_schema(
+            summary="KPI d'un niveau donné (catalogue Kpi)",
+            description="Renvoie les KPI du niveau demandé, filtrés par secteur, avec valeur calculée si disponible.",
+            parameters=[
+                OpenApiParameter(
+                    name='period', type=OpenApiTypes.STR, location=OpenApiParameter.QUERY,
+                    required=False, default='this_month',
+                    enum=['today', 'this_month', 'last_month', 'this_year'],
+                ),
+            ],
+            responses={200: OpenApiTypes.OBJECT}
+        )
+        def get(self, request, numero, *args, **kwargs):
+            return self._handle_get(request, numero)
+    else:
+        def get(self, request, numero, *args, **kwargs):
+            return self._handle_get(request, numero)
+
+    def _handle_get(self, request, numero):
+        entreprise = request.user.entreprise
+        if not entreprise:
+            return Response({"error": "Aucune entreprise configurée"}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            niveau = Niveau.objects.get(numero=numero)
+        except Niveau.DoesNotExist:
+            return Response({"error": f"Niveau {numero} introuvable."}, status=status.HTTP_404_NOT_FOUND)
+
+                # Priorité secteur : si des KPI spécifiques existent pour ce secteur, ils
+        # remplacent ENTIÈREMENT les génériques pour ce niveau (pas d'addition).
+        kpis_specifiques = Kpi.objects.filter(niveau=niveau, secteur=entreprise.secteur)
+        if entreprise.secteur and kpis_specifiques.exists():
+            kpis_catalogue = kpis_specifiques
+        else:
+            kpis_catalogue = Kpi.objects.filter(niveau=niveau, secteur__isnull=True)
+
+        period = request.query_params.get('period', 'this_month')
+        now = timezone.now()
+        ops_periode = self._filtrer_periode(Operation.objects.filter(entreprise=entreprise), period, now)
+        toutes_ops = Operation.objects.filter(entreprise=entreprise)
+
+        calculateurs = self._calculateurs()
+        resultats = []
+
+        for kpi in kpis_catalogue:
+            calc = calculateurs.get(kpi.nom)
+            valeur = calc(entreprise, ops_periode, toutes_ops) if calc else None
+
+            resultats.append({
+                "nom": kpi.nom,
+                "icone": kpi.icone,
+                "unite": kpi.unite,
+                "description": kpi.formule_description,
+                "disponible": calc is not None,
+                "valeur": valeur,
+            })
+
+        return Response({
+            "niveau": {"numero": niveau.numero, "nom": niveau.nom},
+            "period": period,
+            "kpis": resultats,
+        })
+
+    def _filtrer_periode(self, ops, period, now):
+        if period == 'today':
+            return ops.filter(transaction_date=now.date())
+        if period == 'this_month':
+            return ops.filter(transaction_date__year=now.year, transaction_date__month=now.month)
+        if period == 'last_month':
+            month = 12 if now.month == 1 else now.month - 1
+            year = now.year - 1 if now.month == 1 else now.year
+            return ops.filter(transaction_date__year=year, transaction_date__month=month)
+        if period == 'this_year':
+            return ops.filter(transaction_date__year=now.year)
+        return ops
+
+    # --- Calculateurs Niveau 1 ---
+
+    def _calc_chiffre_affaires(self, entreprise, ops_periode, toutes_ops):
+        total = ops_periode.filter(transaction_type="RECETTE").aggregate(t=Sum('amount_ttc'))['t']
+        return float(total or Decimal('0.00'))
+
+    def _calc_depenses(self, entreprise, ops_periode, toutes_ops):
+        total = ops_periode.filter(transaction_type="DEPENSE").aggregate(t=Sum('amount_ttc'))['t']
+        return float(total or Decimal('0.00'))
+
+    def _calc_benefice(self, entreprise, ops_periode, toutes_ops):
+        return self._calc_chiffre_affaires(entreprise, ops_periode, toutes_ops) - self._calc_depenses(entreprise, ops_periode, toutes_ops)
+
+    def _calc_tresorerie(self, entreprise, ops_periode, toutes_ops):
+        encaisse = toutes_ops.filter(transaction_type="RECETTE").aggregate(t=Sum('montant_paye'))['t'] or Decimal('0.00')
+        decaisse = toutes_ops.filter(transaction_type="DEPENSE").aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
+
+        prets_donnes = toutes_ops.filter(transaction_type="PRET_DONNE")
+        sorti_prets = prets_donnes.aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
+        rembourse_recu = prets_donnes.aggregate(t=Sum('montant_paye'))['t'] or Decimal('0.00')
+
+        prets_recus = toutes_ops.filter(transaction_type="PRET_RECU")
+        entre_prets = prets_recus.aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
+        rembourse_verse = prets_recus.aggregate(t=Sum('montant_paye'))['t'] or Decimal('0.00')
+
+        return float(
+            encaisse - decaisse
+            - sorti_prets + rembourse_recu
+            + entre_prets - rembourse_verse
+        )
+
+    def _calc_clients(self, entreprise, ops_periode, toutes_ops):
+        return Contact.objects.filter(
+            entreprise=entreprise, type="CLIENT", operations__in=ops_periode
+        ).distinct().count()
+
+    def _calc_creances(self, entreprise, ops_periode, toutes_ops):
+        creances_ops = toutes_ops.filter(transaction_type="RECETTE", statut_paiement="CREDIT")
+        du = creances_ops.aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
+        paye = creances_ops.aggregate(t=Sum('montant_paye'))['t'] or Decimal('0.00')
+        return float(du - paye)
+    
+    def _calc_marge(self, entreprise, ops_periode, toutes_ops):
+        ca = self._calc_chiffre_affaires(entreprise, ops_periode, toutes_ops)
+        if ca <= 0:
+            return 0.0
+        depenses = self._calc_depenses(entreprise, ops_periode, toutes_ops)
+        return round(((ca - depenses) / ca) * 100, 2)
+
+    def _calc_panier_moyen(self, entreprise, ops_periode, toutes_ops):
+        ventes = ops_periode.filter(transaction_type="RECETTE")
+        nb_ventes = ventes.count()
+        if nb_ventes == 0:
+            return 0.0
+        total = ventes.aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
+        return round(float(total) / nb_ventes, 2)
+
+    def _calc_nombre_ventes(self, entreprise, ops_periode, toutes_ops):
+        return ops_periode.filter(transaction_type="RECETTE").count()
+    
+    def _calc_prets_accordes(self, entreprise, ops_periode, toutes_ops):
+        qs = toutes_ops.filter(transaction_type="PRET_DONNE", statut_paiement="CREDIT")
+        prete = qs.aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
+        rembourse = qs.aggregate(t=Sum('montant_paye'))['t'] or Decimal('0.00')
+        return float(prete - rembourse)
+
+    def _calc_dettes(self, entreprise, ops_periode, toutes_ops):
+        qs = toutes_ops.filter(transaction_type="PRET_RECU", statut_paiement="CREDIT")
+        emprunte = qs.aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
+        rembourse = qs.aggregate(t=Sum('montant_paye'))['t'] or Decimal('0.00')
+        return float(emprunte - rembourse)
+    
+    
+    def _calc_nombre_prestations(self, entreprise, ops_periode, toutes_ops):
+        return PrestationRealisee.objects.filter(
+            operation__in=ops_periode
+        ).aggregate(t=Sum('quantite'))['t'] or 0
+
+    def _calc_heures_facturees(self, entreprise, ops_periode, toutes_ops):
+        total_minutes = PrestationRealisee.objects.filter(
+            operation__in=ops_periode
+        ).aggregate(t=Sum('duree_minutes'))['t'] or 0
+        return round(total_minutes / 60, 2)
+
+    def _calc_marge_par_prestation(self, entreprise, ops_periode, toutes_ops):
+        lignes = PrestationRealisee.objects.filter(
+            operation__in=ops_periode, prestation__cout_unitaire__isnull=False
+        ).select_related('prestation')
+        if not lignes.exists():
+            return None
+        return [
+            {
+                "prestation": l.prestation.nom,
+                "marge_unitaire": float(l.prix_unitaire_facture - l.prestation.cout_unitaire),
+            }
+            for l in lignes
+        ]
+        
+        
+class DeactivateAccountAPIView(APIView):
+    """
+    Désactivation du compte de l'utilisateur authentifié (soft delete).
+    Les données restent conservées ; le compte ne peut plus se reconnecter
+    tant qu'il n'est pas réactivé manuellement (ex. par un admin).
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    if HAS_SPECTACULAR:
+        @extend_schema(
+            summary="Désactiver son compte",
+            description=(
+                "Désactive le compte de l'utilisateur authentifié (is_active=False) "
+                "et supprime son token. Les données restent conservées."
+            ),
+            responses={
+                200: OpenApiTypes.OBJECT,
+                401: OpenApiTypes.OBJECT,
+            }
+        )
+        def post(self, request, *args, **kwargs):
+            return self._handle_post(request, *args, **kwargs)
+    else:
+        def post(self, request, *args, **kwargs):
+            return self._handle_post(request, *args, **kwargs)
+
+    def _handle_post(self, request, *args, **kwargs):
+        user = request.user
+        user.is_active = False
+        user.save(update_fields=['is_active'])
+
+        Token.objects.filter(user=user).delete()
+
+        return Response(
+            {"message": "Compte désactivé avec succès."},
+            status=status.HTTP_200_OK,
+        )       
+
+
+class LinkWhatsAppRequestAPIView(APIView):
+    """
+    Étape 1 : l'utilisateur authentifié demande à lier un numéro WhatsApp
+    à son compte. Un code OTP à 6 chiffres est envoyé sur ce numéro via
+    WhatsApp ; il doit être confirmé via LinkWhatsAppConfirmAPIView.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    if HAS_SPECTACULAR:
+        @extend_schema(
+            summary="Demander la liaison d'un numéro WhatsApp",
+            description=(
+                "Envoie un code OTP par WhatsApp au numéro fourni, pour vérifier "
+                "que l'utilisateur en est bien le propriétaire avant liaison."
+            ),
+            request={
+                "application/json": {
+                    "type": "object",
+                    "properties": {
+                        "telephone_whatsapp": {"type": "string", "example": "+22900000001"},
+                    },
+                    "required": ["telephone_whatsapp"],
+                }
+            },
+            responses={
+                200: OpenApiTypes.OBJECT,
+                400: OpenApiTypes.OBJECT,
+                409: OpenApiTypes.OBJECT,
+            }
+        )
+        def post(self, request, *args, **kwargs):
+            return self._handle_post(request, *args, **kwargs)
+    else:
+        def post(self, request, *args, **kwargs):
+            return self._handle_post(request, *args, **kwargs)
+
+    def _handle_post(self, request, *args, **kwargs):
+        telephone = request.data.get('telephone_whatsapp')
+
+        if not telephone:
+            return Response(
+                {"error": "telephone_whatsapp est requis."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        telephone_normalise = _normalize_phone(telephone)
+
+        # Empêche de lier un numéro déjà utilisé par un AUTRE utilisateur.
+        deja_pris = Utilisateur.objects.filter(
+            telephone_whatsapp=telephone_normalise
+        ).exclude(id=request.user.id).exists()
+
+        if deja_pris:
+            return Response(
+                {"error": "Ce numéro WhatsApp est déjà associé à un autre compte."},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        code = WhatsAppLinkRequest.generer_code()
+
+        demande = WhatsAppLinkRequest.objects.create(
+            utilisateur=request.user,
+            telephone_whatsapp=telephone_normalise,
+            code=code,
+        )
+
+        client = WhatsAppClient()
+        envoye = client.send_text_message(
+            telephone_normalise,
+            f"Femi : votre code de vérification est {code}. Il expire dans 10 minutes."
+        )
+
+        if not envoye:
+            demande.delete()
+            return Response(
+                {"error": "Échec de l'envoi du code WhatsApp. Vérifiez le numéro et réessayez."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        return Response(
+            {"message": "Code envoyé par WhatsApp.", "demande_id": str(demande.id)},
+            status=status.HTTP_200_OK
+        )
+
+
+class LinkWhatsAppConfirmAPIView(APIView):
+    """
+    Étape 2 : l'utilisateur confirme le code OTP reçu par WhatsApp,
+    ce qui finalise la liaison du numéro à son compte.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    if HAS_SPECTACULAR:
+        @extend_schema(
+            summary="Confirmer la liaison WhatsApp avec le code OTP",
+            request={
+                "application/json": {
+                    "type": "object",
+                    "properties": {
+                        "demande_id": {"type": "string"},
+                        "code": {"type": "string", "example": "123456"},
+                    },
+                    "required": ["demande_id", "code"],
+                }
+            },
+            responses={
+                200: OpenApiTypes.OBJECT,
+                400: OpenApiTypes.OBJECT,
+                404: OpenApiTypes.OBJECT,
+            }
+        )
+        def post(self, request, *args, **kwargs):
+            return self._handle_post(request, *args, **kwargs)
+    else:
+        def post(self, request, *args, **kwargs):
+            return self._handle_post(request, *args, **kwargs)
+
+    def _handle_post(self, request, *args, **kwargs):
+        demande_id = request.data.get('demande_id')
+        code = request.data.get('code')
+
+        if not demande_id or not code:
+            return Response(
+                {"error": "demande_id et code sont requis."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            demande = WhatsAppLinkRequest.objects.get(id=demande_id, utilisateur=request.user)
+        except WhatsAppLinkRequest.DoesNotExist:
+            return Response(
+                {"error": "Demande introuvable."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if not demande.est_valide():
+            return Response(
+                {"error": "Code expiré ou trop de tentatives. Recommencez la demande."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if demande.code != code:
+            demande.tentatives += 1
+            demande.save(update_fields=['tentatives'])
+            return Response(
+                {"error": "Code incorrect."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Re-vérifie l'unicité au moment de la confirmation (fenêtre de course
+        # possible entre la demande et la confirmation).
+        deja_pris = Utilisateur.objects.filter(
+            telephone_whatsapp=demande.telephone_whatsapp
+        ).exclude(id=request.user.id).exists()
+
+        if deja_pris:
+            return Response(
+                {"error": "Ce numéro WhatsApp est désormais associé à un autre compte."},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        request.user.telephone_whatsapp = demande.telephone_whatsapp
+        request.user.save(update_fields=['telephone_whatsapp'])
+
+        demande.utilisee = True
+        demande.save(update_fields=['utilisee'])
+
+        return Response(
+            {"message": "Numéro WhatsApp lié avec succès.", "telephone_whatsapp": request.user.telephone_whatsapp},
+            status=status.HTTP_200_OK
+        )
