@@ -12,6 +12,8 @@ from apps.femi_account.models import (
     Contact,
     Plan,
     Abonnement,
+    Prestation,
+    PrestationRealisee,
 )
 
 
@@ -34,6 +36,19 @@ class OperationAdmin(admin.ModelAdmin):
     list_filter = ('transaction_type', 'currency', 'payment_method', 'transaction_date', 'entreprise')
     search_fields = ('description', 'vendor_or_client', 'category')
 
+@admin.register(Prestation)
+class PrestationAdmin(admin.ModelAdmin):
+    list_display = ('nom', 'entreprise', 'prix_unitaire', 'cout_unitaire', 'duree_estimee_minutes', 'actif')
+    list_filter = ('actif', 'entreprise')
+    search_fields = ('nom',)
+
+
+@admin.register(PrestationRealisee)
+class PrestationRealiseeAdmin(admin.ModelAdmin):
+    list_display = ('prestation', 'operation', 'quantite', 'prix_unitaire_facture', 'duree_minutes', 'sous_total')
+    list_filter = ('prestation',)
+    search_fields = ('prestation__nom', 'operation__description')
+    readonly_fields = ('sous_total',)
 
 @admin.register(Secteur)
 class SecteurAdmin(admin.ModelAdmin):
