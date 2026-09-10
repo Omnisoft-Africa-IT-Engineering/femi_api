@@ -51,8 +51,6 @@ class FemiAgentManagerTestCase(TestCase):
         self.assertIn("5 000", result.message.replace("\u202f", " ").replace(",", " "))
         self.assertEqual(Operation.objects.count(), 2)
 
-<<<<<<< HEAD
-=======
     def test_combien_j_ai_vendu_is_detected_as_analytical_query(self):
         """
         Non-régression : bug où le .replace("'", "' ") cassait le matching
@@ -73,7 +71,6 @@ class FemiAgentManagerTestCase(TestCase):
         self.assertFalse(
             FemiAgentManager._is_analytical_query("Vente de 1 sac à 3000")
         )
->>>>>>> b302b58d6a21a860e9330a836cc90e0bde835d43
     @patch("apps.femi_agent.agent.manager.GoogleSheetsExporter")
     @patch("apps.femi_agent.agent.manager.run_ai_extraction")
     def test_recette_creates_operation_and_returns_instance(self, mock_extraction, mock_sheets):

@@ -1,5 +1,6 @@
 import logging
 from decimal import Decimal
+import mimetypes
 from typing import Optional, Tuple
 
 from asgiref.sync import sync_to_async
@@ -7,12 +8,11 @@ from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 
-from apps.femi_account.models import Entreprise, Operation, Utilisateur
-from apps.femi_agent.integrations.sheets_exporter import GoogleSheetsExporter
+from apps.femi_account.models import Entreprise, Operation, PieceJustificative, Utilisateur, Prestation, PrestationRealisee
 from apps.femi_agent.agent.pipeline import run_ai_extraction, arun_ai_extraction
 from apps.femi_agent.schemas import ProcessResult
 from apps.femi_agent.constants import GREETING_PATTERN, ANALYTICAL_PATTERN
-
+from apps.femi_account.integrations.supabase_storage import upload_file
 logger = logging.getLogger(__name__)
 
 
@@ -55,11 +55,14 @@ class FemiAgentManager:
             # pour lever l'ambiguïté RECETTE/DEPENSE sur les documents qui
             # mentionnent plusieurs entreprises (ex: facture fournisseur où le
             # nom du tenant apparaît comme acheteur, pas comme vendeur).
+            secteur_nom, catalogue = cls._build_catalogue(entreprise)
             parsed_data, raw_combined_text = await arun_ai_extraction(
                 text_input=text_input,
                 image_bytes=image_bytes,
                 audio_bytes=audio_bytes,
                 tenant_name=entreprise.nom,
+                secteur_nom=secteur_nom,
+                catalogue=catalogue,
             )
 
             return await sync_to_async(cls._finalize_transaction)(
@@ -92,11 +95,14 @@ class FemiAgentManager:
             if quick_reply is not None:
                 return quick_reply
 
+            secteur_nom, catalogue = cls._build_catalogue(entreprise)
             parsed_data, raw_combined_text = run_ai_extraction(
                 text_input=text_input,
                 image_bytes=image_bytes,
                 audio_bytes=audio_bytes,
                 tenant_name=entreprise.nom,
+                secteur_nom=secteur_nom,
+                catalogue=catalogue,
             )
 
             return cls._finalize_transaction(
@@ -164,7 +170,6 @@ class FemiAgentManager:
             image_file=image_file,
         )
 
-        cls._export_sheets_safe(operation)
 
         return ProcessResult(
             success=True,
@@ -187,17 +192,40 @@ class FemiAgentManager:
         if utilisateur_id:
             return Utilisateur.objects.filter(id=utilisateur_id).first()
         return None
-
+    @classmethod
+    def _build_catalogue(cls, entreprise: Entreprise) -> Tuple[Optional[str], Optional[list]]:
+        """Résout le secteur et construit le catalogue à injecter dans le prompt LLM."""
+        if not entreprise.secteur:
+            return None, None
+        secteur_nom = entreprise.secteur.nom
+        if secteur_nom == "Services":
+            qs = Prestation.objects.filter(entreprise=entreprise, actif=True).values("nom", "prix_unitaire")
+            return secteur_nom, [{"nom": p["nom"], "prix": p["prix_unitaire"]} for p in qs]
+        # Commerce : catalogue Produit pas encore construit (décision reportée du 09/09).
+        return secteur_nom, None
+    
     @classmethod
     def _save_operation(cls, entreprise, utilisateur, parsed_data, source, raw_text, image_file) -> Operation:
-        """Centralise la création atomique d'une opération en base de données."""
+        """Centralise la création atomique d'une opération en base de données.
+
+        NOTE TEMPORAIRE (voir session du 09/09) : cree_par, amount_ht, tax_amount,
+        confidence_score, raw_input_text ne sont PAS envoyés à Operation.objects.create()
+        car ces champs n'existent plus sur le modèle Operation actuel (retirés par la
+        migration 0002). Décision : ne pas restaurer le modèle pour l'instant.
+        TODO : réintégrer une fois la décision d'architecture prise.
+        """
+        logger.warning(
+            "[FemiAgent] Champs non persistés (modèle Operation incomplet) : "
+            "cree_par=%s, amount_ht=%s, tax_amount=%s, confidence_score=%s, raw_input_text_len=%s",
+            utilisateur, parsed_data.amount_ht, parsed_data.tax_amount,
+            parsed_data.confidence_score,
+            len(raw_text) if raw_text else 0,
+        )
+
         with transaction.atomic():
-            return Operation.objects.create(
+            operation = Operation.objects.create(
                 entreprise=entreprise,
-                cree_par=utilisateur,
                 transaction_type=parsed_data.transaction_type,
-                amount_ht=parsed_data.amount_ht or parsed_data.amount_ttc,
-                tax_amount=parsed_data.tax_amount or Decimal("0.00"),
                 amount_ttc=parsed_data.amount_ttc,
                 currency=parsed_data.currency,
                 category=parsed_data.category,
@@ -209,15 +237,75 @@ class FemiAgentManager:
                 ),
                 transaction_date=parsed_data.transaction_date,
                 description=parsed_data.description,
-                confidence_score=parsed_data.confidence_score,
                 source=source,
-                # raw_text est désormais garanti non-vide (voir pipeline._extract_and_combine_text,
-                # qui lève AgentExecutionError si rien n'est exploitable) — c'est le texte brut réel
-                # (saisie utilisateur + OCR + transcription audio), jamais une reformulation LLM.
-                raw_input_text=raw_text,
-                receipt_image=image_file,
             )
+            if getattr(parsed_data, "lignes_prestations", None):
+                cls._attach_prestations_realisees(operation, entreprise, parsed_data.lignes_prestations)
 
+        # Hors du bloc atomic() : l'appel réseau vers Supabase Storage ne doit
+        # pas garder une transaction DB ouverte pendant qu'il attend.
+        if image_file is not None:
+            cls._attach_piece_justificative(operation, image_file)
+
+        return operation
+
+    @classmethod
+    def _attach_piece_justificative(cls, operation: Operation, image_file) -> None:
+        """
+        Upload le fichier reçu vers Supabase Storage et enregistre la
+        référence dans PieceJustificative. Toute erreur (lecture du
+        fichier ou upload) est logguée mais ne fait PAS échouer la
+        sauvegarde de l'opération : le fichier joint est secondaire par
+        rapport à l'enregistrement comptable lui-même.
+        """
+        filename = getattr(image_file, "name", "fichier_whatsapp")
+        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
+        try:
+            image_file.seek(0)
+            content = image_file.read()
+        except Exception:
+            logger.exception(
+                "[FemiAgent] Impossible de lire le fichier pour l'opération %s", operation.id
+            )
+            return
+
+        try:
+            public_url = upload_file(content=content, filename=filename, content_type=content_type)
+        except Exception:
+            logger.exception(
+                "[FemiAgent] Échec de l'upload Supabase Storage pour l'opération %s", operation.id
+            )
+            return
+
+        PieceJustificative.objects.create(
+            operation=operation,
+            nom_fichier=filename,
+            url_fichier=public_url,
+            type_mime=content_type,
+            taille_octets=len(content),
+        )
+        
+    @classmethod
+    def _attach_prestations_realisees(cls, operation: Operation, entreprise: Entreprise, lignes) -> None:
+        for ligne in lignes:
+            prestation = Prestation.objects.filter(
+                entreprise=entreprise, nom=ligne.nom_prestation, actif=True
+            ).first()
+            if prestation is None:
+                logger.warning(
+                    "[FemiAgent] Prestation '%s' introuvable au catalogue (opération %s) — ligne ignorée.",
+                    ligne.nom_prestation, operation.id,
+                )
+                continue
+            PrestationRealisee.objects.create(
+                operation=operation,
+                prestation=prestation,
+                quantite=ligne.quantite,
+                prix_unitaire_facture=prestation.prix_unitaire,
+                duree_minutes=ligne.duree_minutes,
+            )
+    
     @classmethod
     def _is_pure_greeting(cls, text: str) -> bool:
         words = text.split()
@@ -275,12 +363,7 @@ class FemiAgentManager:
 
         return ProcessResult(success=True, operation_id=None, message=reply_message, parsed_data=None)
 
-    @classmethod
-    def _export_sheets_safe(cls, operation: Operation) -> None:
-        try:
-            GoogleSheetsExporter.append_operation(operation)
-        except Exception:
-            logger.error("[GoogleSheets] Échec de la synchronisation pour l'opération %s", operation.id)
+    
 
     @staticmethod
     def _format_success_message(operation: Operation) -> str:

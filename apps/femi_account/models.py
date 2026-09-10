@@ -1,11 +1,14 @@
 import uuid
 from django.db import models
 from django.contrib.auth.models import AbstractUser
-
+import random
+from datetime import timedelta
+from django.utils import timezone
 
 class Utilisateur(AbstractUser):
     """Modèle d'utilisateur personnalisé pour Femi."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    email = models.EmailField("email address", unique=True, blank=True, null=True)
     entreprise = models.ForeignKey(
         'Entreprise',
         on_delete=models.SET_NULL,
@@ -68,6 +71,8 @@ class Operation(models.Model):
     TRANSACTION_TYPES = [
         ('RECETTE', 'Recette'),
         ('DEPENSE', 'Dépense'),
+        ('PRET_DONNE', 'Prêt donné'),   # tu prêtes à quelqu'un
+        ('PRET_RECU', 'Prêt reçu'),     # on te prête
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -85,13 +90,35 @@ class Operation(models.Model):
     description = models.TextField(blank=True, null=True)
     vendor_or_client = models.CharField(max_length=255, blank=True, null=True)
     source = models.CharField(max_length=50, blank=True, null=True)
-
+    
+    contact = models.ForeignKey(
+        'Contact',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="operations"
+    )
+    statut_paiement = models.CharField(
+        max_length=10,
+        choices=[('PAYE', 'Payé'), ('CREDIT', 'À crédit')],
+        default='PAYE'
+    )
+    montant_paye = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        help_text="Cumul des paiements reçus. Pour une opération PAYE, "
+                   "correspond au montant total (voir save())."
+    )
     class Meta:
         verbose_name = "Opération"
         verbose_name_plural = "Opérations"
 
     def __str__(self):
         return f"{self.transaction_type} - {self.amount_ttc} {self.currency} ({self.entreprise.nom})"
+    
+    def save(self, *args, **kwargs):
+        if self.statut_paiement == 'PAYE' and self.montant_paye == 0:
+            self.montant_paye = self.amount_ttc
+        super().save(*args, **kwargs)
 
 
 class Niveau(models.Model):
@@ -281,3 +308,87 @@ class Abonnement(models.Model):
 
     def __str__(self):
         return f"{self.entreprise.nom} - {self.plan.nom} ({self.statut})"
+    
+class PieceJustificative(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    operation = models.ForeignKey(
+        'Operation',
+        on_delete=models.CASCADE,
+        related_name='pieces_justificatives'
+    )
+    nom_fichier = models.CharField(max_length=255)
+    url_fichier = models.CharField(max_length=500)
+    type_mime = models.CharField(max_length=100)
+    taille_octets = models.PositiveIntegerField(null=True, blank=True)
+    date_televersement = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Pièce justificative"
+        verbose_name_plural = "Pièces justificatives"
+
+    def __str__(self):
+        return f"{self.nom_fichier} ({self.operation_id})"
+    
+class Prestation(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entreprise = models.ForeignKey('Entreprise', on_delete=models.CASCADE, related_name="prestations")
+    nom = models.CharField(max_length=150)
+    prix_unitaire = models.DecimalField(max_digits=12, decimal_places=2)
+    cout_unitaire = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    duree_estimee_minutes = models.PositiveIntegerField(null=True, blank=True)
+    actif = models.BooleanField(default=True)
+
+    class Meta:
+        unique_together = [('entreprise', 'nom')]
+
+
+class PrestationRealisee(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    operation = models.ForeignKey('Operation', on_delete=models.CASCADE, related_name="prestations_realisees")
+    prestation = models.ForeignKey('Prestation', on_delete=models.PROTECT, related_name="realisations")
+    quantite = models.PositiveIntegerField(default=1)
+    prix_unitaire_facture = models.DecimalField(max_digits=12, decimal_places=2)
+    duree_minutes = models.PositiveIntegerField(null=True, blank=True)
+    sous_total = models.DecimalField(max_digits=12, decimal_places=2, editable=False)
+
+    def save(self, *args, **kwargs):
+        self.sous_total = self.quantite * self.prix_unitaire_facture
+        super().save(*args, **kwargs)
+
+
+
+class WhatsAppLinkRequest(models.Model):
+    """
+    Demande de liaison d'un numéro WhatsApp à un compte Utilisateur existant,
+    avec vérification par code OTP envoyé sur WhatsApp (protège contre
+    l'usurpation d'un numéro appartenant à quelqu'un d'autre).
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    utilisateur = models.ForeignKey(
+        'Utilisateur', on_delete=models.CASCADE, related_name="whatsapp_link_requests"
+    )
+    telephone_whatsapp = models.CharField(max_length=30)
+    code = models.CharField(max_length=6)
+    tentatives = models.PositiveSmallIntegerField(default=0)
+    utilisee = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        verbose_name = "Demande de liaison WhatsApp"
+        verbose_name_plural = "Demandes de liaison WhatsApp"
+
+    def save(self, *args, **kwargs):
+        if not self.expires_at:
+            self.expires_at = timezone.now() + timedelta(minutes=10)
+        super().save(*args, **kwargs)
+
+    def est_valide(self):
+        return not self.utilisee and timezone.now() < self.expires_at and self.tentatives < 5
+
+    @staticmethod
+    def generer_code():
+        return f"{random.randint(0, 999999):06d}"
+
+    def __str__(self):
+        return f"OTP {self.telephone_whatsapp} pour {self.utilisateur.username}"

@@ -18,6 +18,9 @@ Ton rôle est d'analyser le message de l'utilisateur pour en extraire rigoureuse
 * **transaction_type :**
   - `RECETTE` : Entrée d'argent, vente, prestation, acompte reçu.
   - `DEPENSE` : Sortie d'argent, achat, loyer, salaire, carburant, frais.
+  - `PRET_DONNE` : L'utilisateur prête de l'argent à un tiers (ex: "j'ai prêté 10000 à Koffi", "j'ai avancé 5000 à ma sœur"). Ce n'est PAS une DEPENSE : l'argent doit revenir.
+  - `PRET_RECU` : Un tiers prête de l'argent à l'utilisateur (ex: "Ama m'a prêté 20000", "j'ai emprunté 15000 à la tontine"). Ce n'est PAS une RECETTE : l'argent devra être remboursé.
+  
   - **Règle d'identité de l'entreprise :** Le nom de l'entreprise de l'utilisateur est **{tenant_name}**.
     - Si ce nom apparaît sur le document comme l'ACHETEUR/le PAYEUR (ex: destinataire de la facture), c'est une DÉPENSE — même si le document mentionne des "ventes" faites par un tiers.
     - Si ce nom apparaît comme le VENDEUR/l'ÉMETTEUR du document, c'est une RECETTE.
@@ -37,8 +40,10 @@ Ton rôle est d'analyser le message de l'utilisateur pour en extraire rigoureuse
   - `OTHER` : Si non spécifié ou indéterminé.
 
 * **vendor_or_client :** Nom de la contrepartie (client, fournisseur, prestataire), ou `null`.
+   - **Pour un prêt (PRET_DONNE/PRET_RECU), ce champ est important : indique le nom de la personne qui prête ou qui emprunte.** Si le message ne nomme personne explicitement, laisse `null` plutôt que d'inventer un nom.
 
 * **transaction_date :** Date au format ISO `YYYY-MM-DD`, ou `null`.
+  
 
 * **description :** Synthèse courte et professionnelle de l'opération (ex: "Vente de 2 sacs de riz").
 
@@ -46,7 +51,7 @@ Ton rôle est d'analyser le message de l'utilisateur pour en extraire rigoureuse
   - `1.0` si l'opération est claire et le montant explicite.
   - `0.5` si des informations manquent (ex: pas de moyen de paiement).
   - `0.0` si ce n'est pas une transaction financière.
-
+{catalogue_section}
 ---
 ### MESSAGE DE L'UTILISATEUR À ANALYSER
 {input}
