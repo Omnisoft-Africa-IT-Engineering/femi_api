@@ -27,6 +27,8 @@ PAYMENT_METHOD_KEYWORDS = {
     PaymentMethodEnum.CARD: ["carte", "visa", "mastercard"],
 }
 
+LOAN_GIVEN_KEYWORDS = ["j'ai prêté", "prêté à", "avancé à", "j'ai avancé"]
+LOAN_RECEIVED_KEYWORDS = ["m'a prêté", "j'ai emprunté", "emprunté à", "reçu en prêt"]
 FALLBACK_CONFIDENCE_SCORE = 0.50
 MIN_PLAUSIBLE_AMOUNT = Decimal("50")
 EXCLUDED_YEAR_LIKE_VALUE = Decimal("2026")
@@ -37,6 +39,8 @@ def run_ai_extraction(
     image_bytes: Optional[bytes] = None,
     audio_bytes: Optional[bytes] = None,
     tenant_name: Optional[str] = None,
+    secteur_nom: Optional[str] = None,
+    catalogue: Optional[list] = None,
 ) -> Tuple[ParsedOperationSchema, str]:
     """
     Point d'entrée SYNCHRONE.
@@ -54,10 +58,10 @@ def run_ai_extraction(
         doit être stocké tel quel pour la traçabilité (raw_input_text), il ne doit
         JAMAIS être remplacé par `parsed_data.description` qui est une reformulation LLM.
     """
-    combined_text = _extract_and_combine_text(text_input, image_bytes, audio_bytes)
+    combined_text = _extract_and_combine_text(text_input, image_bytes, audio_bytes,)
 
     try:
-        parsed_data = analyze_accounting_text(combined_text, tenant_name)
+        parsed_data = analyze_accounting_text(combined_text, tenant_name, secteur_nom, catalogue)
     except AgentExecutionError as e:
         logger.warning("[Pipeline] LLM indisponible, bascule sur fallback Regex : %s", e)
         parsed_data = _fallback_parser(combined_text)
@@ -73,12 +77,14 @@ async def arun_ai_extraction(
     image_bytes: Optional[bytes] = None,
     audio_bytes: Optional[bytes] = None,
     tenant_name: Optional[str] = None,
+    secteur_nom: Optional[str] = None,
+    catalogue: Optional[list] = None,
 ) -> Tuple[ParsedOperationSchema, str]:
     """Point d'entrée ASYNCHRONE. Voir `run_ai_extraction` pour le contrat de retour et `tenant_name`."""
     combined_text = _extract_and_combine_text(text_input, image_bytes, audio_bytes)
 
     try:
-        parsed_data = await aanalyze_accounting_text(combined_text, tenant_name)
+        parsed_data = await aanalyze_accounting_text(combined_text, tenant_name, secteur_nom, catalogue)
     except AgentExecutionError as e:
         logger.warning("[Pipeline Async] LLM indisponible, bascule sur fallback Regex : %s", e)
         parsed_data = _fallback_parser(combined_text)
@@ -140,12 +146,21 @@ def _detect_payment_method(text_lower: str) -> PaymentMethodEnum:
     return PaymentMethodEnum.CASH
 
 
+def _detect_transaction_type(text_lower: str) -> str:
+    """Détermine le type de transaction par mots-clés, prêts en priorité (plus spécifiques que RECETTE/DEPENSE)."""
+    if any(kw in text_lower for kw in LOAN_RECEIVED_KEYWORDS):
+        return "PRET_RECU"
+    if any(kw in text_lower for kw in LOAN_GIVEN_KEYWORDS):
+        return "PRET_DONNE"
+    is_recette = any(w in text_lower for w in ["vente", "reçu", "recette", "gain", "encaissement", "client", "vendu"])
+    return "RECETTE" if is_recette else "DEPENSE"
+
 def _fallback_parser(text_input: str) -> ParsedOperationSchema:
     """Analyseur dégradé basé sur des expressions régulières (LLM hors-ligne)."""
     text_lower = text_input.lower()
 
-    is_recette = any(w in text_lower for w in ["vente", "reçu", "recette", "gain", "encaissement", "client", "vendu"])
-    transaction_type = "RECETTE" if is_recette else "DEPENSE"
+    transaction_type = _detect_transaction_type(text_lower)
+    is_recette = transaction_type == "RECETTE"  # conservé : utilisé plus bas par _detect_category
 
     raw_numbers = re.findall(r"\b\d+(?:[\s.,]\d+)*\b", text_input)
     clean_numbers = []

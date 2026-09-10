@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 from typing import Any, Literal, Optional
-
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 logger = logging.getLogger(__name__)
@@ -18,13 +18,29 @@ class PaymentMethodEnum(str, Enum):
     OTHER = "OTHER"
 
 
+class LigneVenteExtraite(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    nom_produit: str = Field(description="Nom du produit, doit correspondre exactement à un nom du catalogue fourni.")
+    quantite: float = Field(gt=0, description="Quantité vendue.")
+    prix_unitaire: Optional[float] = Field(default=None, description="Prix unitaire si mentionné, sinon prix du catalogue.")
+
+
+class LignePrestationExtraite(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    nom_prestation: str = Field(description="Nom de la prestation, doit correspondre exactement à un nom du catalogue fourni.")
+    quantite: int = Field(default=1, gt=0)
+    duree_minutes: Optional[int] = Field(default=None, description="Durée réelle en minutes si mentionnée.")
 class BaseOperationSchema(BaseModel):
     """Schéma de base contenant la structure commune aux transactions."""
 
     model_config = ConfigDict(extra="ignore")  # tolère les champs superflus hallucinés par le LLM
 
-    transaction_type: Literal["RECETTE", "DEPENSE"] = Field(
-        description="Indique s'il s'agit d'une entrée (RECETTE) ou d'une sortie d'argent (DEPENSE)."
+    transaction_type: Literal["RECETTE", "DEPENSE", "PRET_DONNE", "PRET_RECU"] = Field(
+        description=(
+            "RECETTE (entrée d'argent classique), DEPENSE (sortie d'argent classique), "
+            "PRET_DONNE (l'utilisateur prête de l'argent à quelqu'un), "
+            "PRET_RECU (quelqu'un prête de l'argent à l'utilisateur)."
+        )
     )
     currency: str = Field(
         default="XOF",
@@ -36,7 +52,10 @@ class BaseOperationSchema(BaseModel):
     )
     vendor_or_client: Optional[str] = Field(
         default=None,
-        description="Nom de la contrepartie (fournisseur, client ou prestataire).",
+        description=(
+            "Nom de la contrepartie (fournisseur, client, prestataire, ou personne "
+            "impliquée dans un prêt donné/reçu)."
+        ),
     )
     payment_method: PaymentMethodEnum = Field(
         default=PaymentMethodEnum.CASH,
@@ -71,7 +90,22 @@ class BaseOperationSchema(BaseModel):
                 logger.warning("[Schema] Date LLM invalide reçue ('%s'), défaut sur aujourd'hui", value)
                 return date.today()
         return date.today()
-
+    
+    @model_validator(mode="after")
+    def warn_if_pret_without_contact(self) -> "BaseOperationSchema":
+        """
+        Un prêt sans contrepartie identifiée est structurellement incomplet
+        (impossible de suivre qui doit quoi) : on ne bloque pas la validation
+        (le LLM peut légitimement ne pas avoir capté le nom), mais on trace
+        le cas pour que manager.py sache qu'il devra demander confirmation
+        ou laisser `contact` vide côté Operation.
+        """
+        if self.transaction_type in ("PRET_DONNE", "PRET_RECU") and not self.vendor_or_client:
+            logger.warning(
+                "[Schema] Transaction de type %s détectée sans contrepartie identifiée (vendor_or_client=None)",
+                self.transaction_type,
+            )
+        return self
 
 class LLMExtractionSchema(BaseOperationSchema):
     """
@@ -97,6 +131,7 @@ class LLMExtractionSchema(BaseOperationSchema):
             transaction_date=self.transaction_date,
             description=self.description,
             confidence_score=self.confidence_score,
+            
         )
 
 
@@ -109,6 +144,8 @@ class ParsedOperationSchema(BaseOperationSchema):
     amount_ttc: Decimal = Field(ge=0, description="Montant total TTC exact (toujours positif ou nul).")
     amount_ht: Optional[Decimal] = Field(default=None, ge=0, description="Montant Hors Taxe exact.")
     tax_amount: Optional[Decimal] = Field(default=None, ge=0, description="Montant de TVA exact.")
+    lignes_produits: Optional[list[LigneVenteExtraite]] = Field(default=None, description="Lignes produits (secteur Commerce uniquement).")
+    lignes_prestations: Optional[list[LignePrestationExtraite]] = Field(default=None, description="Lignes prestations (secteur Services uniquement).")
 
     @field_validator("amount_ttc", "amount_ht", "tax_amount", mode="before")
     @classmethod
@@ -120,6 +157,28 @@ class ParsedOperationSchema(BaseOperationSchema):
             return value
         return Decimal(str(value))
 
+class LLMExtractionSchemaCommerce(LLMExtractionSchema):
+    lignes_produits: list[LigneVenteExtraite] = Field(
+        default_factory=list,
+        description="Détail des produits vendus/achetés dans cette transaction.",
+    )
+
+    def to_parsed_schema(self) -> "ParsedOperationSchema":
+        parsed = super().to_parsed_schema()
+        parsed.lignes_produits = self.lignes_produits
+        return parsed
+
+
+class LLMExtractionSchemaService(LLMExtractionSchema):
+    lignes_prestations: list[LignePrestationExtraite] = Field(
+        default_factory=list,
+        description="Détail des prestations effectuées dans cette transaction.",
+    )
+
+    def to_parsed_schema(self) -> "ParsedOperationSchema":
+        parsed = super().to_parsed_schema()
+        parsed.lignes_prestations = self.lignes_prestations
+        return parsed
 
 class ProcessResult(BaseModel):
     """
