@@ -8,6 +8,8 @@ from django.utils import timezone
 class Utilisateur(AbstractUser):
     """Modèle d'utilisateur personnalisé pour Femi."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    # ➕ AJOUTER CE CHAMP : Nom complet saisi à l'étape 1 du formulaire
+    full_name = models.CharField(max_length=255, blank=True, null=True)
     email = models.EmailField("email address", unique=True, blank=True, null=True)
     entreprise = models.ForeignKey(
         'Entreprise',
@@ -45,6 +47,7 @@ class Entreprise(models.Model):
     """Modèle représentant une entreprise cliente."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     nom = models.CharField(max_length=255)
+    adresse = models.CharField(max_length=255, blank=True, null=True)
     secteur = models.ForeignKey(
         Secteur,
         on_delete=models.SET_NULL,
@@ -52,12 +55,16 @@ class Entreprise(models.Model):
         blank=True,
         related_name="entreprises"
     )
+    # ➕ AJOUTER CES 2 CHAMPS :
+    type_activite = models.CharField(max_length=50, blank=True, null=True, help_text="ex: achatvent, depotvente, personnel")
+    type_entreprise = models.CharField(max_length=50, blank=True, null=True, help_text="ex: individuel, sarl, sa, autre")
+
     rccm = models.CharField(max_length=100, blank=True, null=True)
     ifu = models.CharField(max_length=100, blank=True, null=True)
     regime_fiscal = models.CharField(max_length=100, blank=True, null=True)
     devise = models.CharField(max_length=10, default="XOF")
     created_at = models.DateTimeField(auto_now_add=True)
-
+   
     class Meta:
         verbose_name = "Entreprise"
         verbose_name_plural = "Entreprises"
@@ -296,6 +303,8 @@ class Abonnement(models.Model):
         related_name="abonnements"
     )
     prix_paye = models.DecimalField(max_digits=10, decimal_places=2)
+    # ➕ AJOUTER CE CHAMP : Mode de règlement (Mobile Money, Carte, etc.)
+    mode_paiement = models.CharField(max_length=50, blank=True, null=True)
     date_debut = models.DateField()
     date_fin = models.DateField()
     statut = models.CharField(max_length=15, choices=STATUT_CHOICES, default='EN_ATTENTE')
