@@ -219,3 +219,14 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 SUPABASE_URL = config("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = config("SUPABASE_SERVICE_ROLE_KEY")
 SUPABASE_STORAGE_BUCKET = config("SUPABASE_STORAGE_BUCKET", default="pieces-justificatives")
+# Paiement mobile (FedaPay), expos? via la GraphQL API ImmoAsk mutualis?e.
+IMMOASK_GRAPHQL_URL = config(
+    "IMMOASK_GRAPHQL_URL",
+    default="https://immoaskprodapi.omnisoft.africa/api/v2",
+)
+IMMOASK_API_KEY = config("IMMOASK_API_KEY", default="")
+FEMI_PAYMENT_CALLBACK_URL = config(
+    "FEMI_PAYMENT_CALLBACK_URL",
+    default="https://api.femi.app/api/account/payment/callback/",
+)
+FEDAPAY_WEBHOOK_SECRET = config("FEDAPAY_WEBHOOK_SECRET", default="")
