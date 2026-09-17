@@ -3,6 +3,7 @@ from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
 from .models import Utilisateur, Entreprise, Plan, Abonnement
+from django.contrib.auth import authenticate
 
 class RegisterSerializer(serializers.Serializer):
     # Étape 1 : Utilisateur
@@ -69,3 +70,47 @@ class RegisterSerializer(serializers.Serializer):
         )
 
         return user
+
+
+class PublicLoginSerializer(serializers.Serializer):
+    """
+    Serializer pour la connexion publique par Email / Mot de passe.
+    """
+    email = serializers.EmailField(
+        required=True,
+        help_text="Adresse email de l'utilisateur."
+    )
+    password = serializers.CharField(
+        write_only=True,
+        required=True,
+        help_text="Mot de passe de l'utilisateur."
+    )
+
+    def validate(self, attrs):
+        email = attrs.get('email', '').lower().strip()
+        password = attrs.get('password')
+
+        if email and password:
+            # Django authenticate vérifie les identifiants en BDD
+            user = authenticate(
+                request=self.context.get('request'),
+                username=email,
+                password=password
+            )
+
+            if not user:
+                raise serializers.ValidationError(
+                    "Email ou mot de passe incorrect."
+                )
+            
+            if not user.is_active:
+                raise serializers.ValidationError(
+                    "Ce compte est désactivé. Veuillez contacter le support."
+                )
+        else:
+            raise serializers.ValidationError(
+                "L'email et le mot de passe sont obligatoires."
+            )
+
+        attrs['user'] = user
+        return attrs
