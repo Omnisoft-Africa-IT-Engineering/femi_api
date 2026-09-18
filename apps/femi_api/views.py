@@ -5,6 +5,7 @@ import io
 from django.contrib.auth import authenticate
 from django.db import connection, transaction
 from django.db.models import Avg, Q, Sum
+from django.db.models.functions import Coalesce
 from django.http import HttpResponse as DjangoHttpResponse
 from django.utils import timezone
 from rest_framework import status
@@ -429,30 +430,20 @@ class EtatFinancierAPIView(APIView):
 class RegistreJournalierAPIView(APIView):
     """
     7. ENDPOINT REGISTRE JOURNALIER (GET)
-    Renvoie les transactions d'une journée donnée, avec les totaux
-    recettes/dépenses de cette journée.
-
-    Version simplifiée : une transaction = une écriture (pas de partie
-    double avec plan comptable, puisque le modèle Operation n'a pas
-    encore de notion de comptes comptables).
+    Renvoie les écritures et les totaux pour une plage de dates donnée.
+    Paramètres query : date_debut, date_fin (format YYYY-MM-DD).
     """
 
     permission_classes = [IsAuthenticated]
 
     if HAS_SPECTACULAR:
         @extend_schema(
-            summary="Registre journalier d'une date donnée",
-            description="Renvoie les transactions du jour, avec totaux recettes/dépenses.",
+            summary="Registre journalier (écritures + totaux sur une plage de dates)",
             parameters=[
-                OpenApiParameter(
-                    name='date',
-                    type=OpenApiTypes.DATE,
-                    location=OpenApiParameter.QUERY,
-                    required=False,
-                    description="Date au format YYYY-MM-DD (aujourd'hui par défaut)",
-                ),
+                OpenApiParameter(name='date_debut', type=OpenApiTypes.DATE, location=OpenApiParameter.QUERY, required=False),
+                OpenApiParameter(name='date_fin', type=OpenApiTypes.DATE, location=OpenApiParameter.QUERY, required=False),
             ],
-            responses={200: OpenApiTypes.OBJECT}
+            responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT}
         )
         def get(self, request, *args, **kwargs):
             return self._handle_get(request, *args, **kwargs)
@@ -468,57 +459,58 @@ class RegistreJournalierAPIView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        date_param = request.query_params.get('date')
-        if date_param:
-            try:
-                jour = datetime.strptime(date_param, "%Y-%m-%d").date()
-            except ValueError:
-                return Response(
-                    {"error": "Le paramètre 'date' doit être au format YYYY-MM-DD."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        else:
-            jour = timezone.now().date()
+        date_debut = request.query_params.get('date_debut')
+        date_fin = request.query_params.get('date_fin')
 
-        ops = Operation.objects.filter(
-            entreprise=entreprise,
-            transaction_date=jour
-        ).order_by('-transaction_date')
+        queryset = Operation.objects.filter(entreprise=entreprise)
 
-        total_recettes = ops.filter(transaction_type="RECETTE").aggregate(
-            t=Sum('amount_ttc')
-        )['t'] or Decimal('0.00')
+        if date_debut:
+            queryset = queryset.filter(transaction_date__gte=date_debut)
+        if date_fin:
+            queryset = queryset.filter(transaction_date__lte=date_fin)
 
-        total_depenses = ops.filter(transaction_type="DEPENSE").aggregate(
-            t=Sum('amount_ttc')
-        )['t'] or Decimal('0.00')
+        queryset = queryset.order_by('-transaction_date')
 
+        totaux = queryset.aggregate(
+            total_recettes=Coalesce(
+                Sum("amount_ttc", filter=Q(transaction_type__iexact="RECETTE")),
+                Decimal("0.00"),
+            ),
+            total_depenses=Coalesce(
+                Sum("amount_ttc", filter=Q(transaction_type__iexact="DEPENSE")),
+                Decimal("0.00"),
+            ),
+        )
+        total_recettes = totaux["total_recettes"]
+        total_depenses = totaux["total_depenses"]
+
+        # IMPORTANT : on construit ici manuellement les clés attendues
+        # par le frontend Flutter (id, type, montant, date, heure,
+        # titre, categorie) — pas de serializer générique.
         ecritures = []
-        for op in ops:
-            est_recette = op.transaction_type == "RECETTE"
+        for op in queryset:
+            est_recette = (op.transaction_type or "").upper() in ("RECETTE", "INCOME")
             ecritures.append({
                 "id": str(op.id),
-                "heure": "",
-                "titre": op.description or op.category or op.transaction_type,
-                "categorie": op.category,
-                "montant": float(op.amount_ttc),
-                "type": op.transaction_type,
-                "mode_paiement": op.payment_method,
-                "contact": op.vendor_or_client,
+                "type": "RECETTE" if est_recette else "DEPENSE",
+                "date": op.transaction_date.isoformat() if op.transaction_date else "",
+                "heure": op.created_at.strftime("%H:%M") if hasattr(op, "created_at") and op.created_at else "",
+                "titre": op.description or op.vendor_or_client or op.category or ("Recette" if est_recette else "Dépense"),
+                "categorie": op.category or ("Recette" if est_recette else "Dépense"),
+                "montant": float(op.amount_ttc) if op.amount_ttc is not None else 0.0,
             })
 
         return Response(
             {
-                "date": jour.isoformat(),
                 "devise": entreprise.devise or "XOF",
                 "total_recettes": float(total_recettes),
                 "total_depenses": float(total_depenses),
+                "solde": float(total_recettes - total_depenses),
                 "ecritures": ecritures,
             },
             status=status.HTTP_200_OK
         )
-
-
+    
 class GrandLivreAPIView(APIView):
     """
     9. ENDPOINT GRAND LIVRE SIMPLIFIÉ (GET)
