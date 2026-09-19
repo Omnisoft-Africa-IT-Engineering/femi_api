@@ -5,19 +5,18 @@ from rest_framework import serializers
 from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
-from .models import Utilisateur, Entreprise, Plan, Abonnement
-from .integrations.fedapay_payment import initiate_payment, FedaPayError
+from django.contrib.auth import authenticate
 
-logger = logging.getLogger(__name__)
+from .models import Utilisateur, Entreprise, Plan, Abonnement, EcheanceFiscale
+
 
 class RegisterSerializer(serializers.Serializer):
-    # ??tape 1 : Utilisateur
+    """Inscription utilisateur + entreprise + abonnement."""
     full_name = serializers.CharField(max_length=255)
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=8)
     confirm_password = serializers.CharField(write_only=True)
 
-    # ??tape 2 : Entreprise
     company_name = serializers.CharField(max_length=255)
     secteur_id = serializers.UUIDField(required=False, allow_null=True)
     type_activite = serializers.CharField(max_length=50)
@@ -26,7 +25,6 @@ class RegisterSerializer(serializers.Serializer):
     devise = serializers.CharField(default='XOF')
     phone_number = serializers.CharField(max_length=50, required=False, allow_blank=True)
 
-    # ??tape 3 : Abonnement
     plan_id = serializers.UUIDField()
     mode_paiement = serializers.CharField(max_length=50)
 
@@ -39,7 +37,6 @@ class RegisterSerializer(serializers.Serializer):
 
     @transaction.atomic
     def create(self, validated_data):
-        # 1. Cr??ation de l'entreprise
         entreprise = Entreprise.objects.create(
             nom=validated_data['company_name'],
             secteur_id=validated_data.get('secteur_id'),
@@ -49,7 +46,6 @@ class RegisterSerializer(serializers.Serializer):
             devise=validated_data.get('devise', 'XOF')
         )
 
-        # 2. Cr??ation de l'utilisateur
         user = Utilisateur.objects.create_user(
             username=validated_data['email'],
             email=validated_data['email'],
@@ -59,7 +55,6 @@ class RegisterSerializer(serializers.Serializer):
             role='admin'
         )
 
-        # 3. Cr??ation de l'abonnement
         plan = Plan.objects.get(id=validated_data['plan_id'])
         date_debut = timezone.now().date()
         date_fin = date_debut + timedelta(days=plan.duree_jours)
@@ -74,4 +69,47 @@ class RegisterSerializer(serializers.Serializer):
             statut='EN_ATTENTE'
         )
 
-        return user, abonnement
+        return user
+
+
+class PublicLoginSerializer(serializers.Serializer):
+    """Connexion publique par Email / Mot de passe."""
+    email = serializers.EmailField(required=True)
+    password = serializers.CharField(write_only=True, required=True)
+
+    def validate(self, attrs):
+        email = attrs.get('email', '').lower().strip()
+        password = attrs.get('password')
+
+        if email and password:
+            user = authenticate(
+                request=self.context.get('request'),
+                username=email,
+                password=password
+            )
+
+            if not user:
+                raise serializers.ValidationError("Email ou mot de passe incorrect.")
+            
+            if not user.is_active:
+                raise serializers.ValidationError("Ce compte est désactivé.")
+        else:
+            raise serializers.ValidationError("L'email et le mot de passe sont obligatoires.")
+
+        attrs['user'] = user
+        return attrs
+
+
+class EcheanceFiscaleSerializer(serializers.ModelSerializer):
+    """Serializer CRUD pour les Échéances Fiscales."""
+    class Meta:
+        model = EcheanceFiscale
+        fields = [
+            'id',
+            'type_echeance',
+            'libelle',
+            'date_echeance',
+            'statut',
+            'dernier_rappel_envoye',
+        ]
+        read_only_fields = ['id', 'dernier_rappel_envoye']

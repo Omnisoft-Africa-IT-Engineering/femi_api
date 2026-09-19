@@ -403,3 +403,128 @@ class WhatsAppLinkRequest(models.Model):
 
     def __str__(self):
         return f"OTP {self.telephone_whatsapp} pour {self.utilisateur.username}"
+
+
+class Conversation(models.Model):
+    """Session de discussion globale, tous canaux confondus."""
+
+    CANAL_CHOICES = [
+        ('WHATSAPP', 'WhatsApp'),
+        ('MOBILE', 'Application Mobile'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    utilisateur = models.ForeignKey(
+        Utilisateur,
+        on_delete=models.CASCADE,
+        related_name="conversations"
+    )
+    entreprise = models.ForeignKey(
+        Entreprise,
+        on_delete=models.CASCADE,
+        related_name="conversations"
+    )
+    canal_origine = models.CharField(max_length=10, choices=CANAL_CHOICES)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Conversation"
+        verbose_name_plural = "Conversations"
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return f"Conversation {self.utilisateur.username} ({self.canal_origine})"
+
+
+class ConversationHistory(models.Model):
+    """Un message individuel dans une Conversation, quel que soit son canal."""
+
+    CANAL_CHOICES = [
+        ('WHATSAPP', 'WhatsApp'),
+        ('MOBILE', 'Application Mobile'),
+    ]
+
+    EXPEDITEUR_CHOICES = [
+        ('USER', 'Utilisateur'),
+        ('AGENT', 'Agent Femi'),
+    ]
+
+    TYPE_MESSAGE_CHOICES = [
+        ('TEXTE', 'Texte'),
+        ('AUDIO', 'Audio'),
+        ('IMAGE', 'Image'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    conversation = models.ForeignKey(
+        Conversation,
+        on_delete=models.CASCADE,
+        related_name="messages"
+    )
+    canal = models.CharField(max_length=10, choices=CANAL_CHOICES)
+    expediteur = models.CharField(max_length=10, choices=EXPEDITEUR_CHOICES)
+    type_message = models.CharField(max_length=10, choices=TYPE_MESSAGE_CHOICES, default='TEXTE')
+    contenu_texte = models.TextField(blank=True, null=True)
+    fichier_url = models.CharField(max_length=500, blank=True, null=True)
+    operation = models.ForeignKey(
+        Operation,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="messages_lies"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Message de conversation"
+        verbose_name_plural = "Historique des conversations"
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"[{self.canal}] {self.expediteur} - {self.type_message}"
+
+
+from django.db import models
+
+
+class EcheanceFiscale(models.Model):
+    TYPE_ECHEANCE_CHOICES = [
+        ("TVA", "Déclaration TVA (Mensuel)"),
+        ("TPU_ACOMPTE", "Acompte TPU / Patente (Trimestriel)"),
+        ("LIASSE_ANNUELLE", "Bilan Annuel / Liasse SYSCOHADA"),
+        ("DAS", "Déclaration Annuelle des Salaires"),
+        ("AUTRE", "Autre obligation OTR"),
+    ]
+
+    STATUT_CHOICES = [
+        ("EN_ATTENTE", "En attente"),
+        ("RAPPELE", "Rappel envoyé"),
+        ("PAYE", "Payé"),
+        ("EN_RETARD", "En retard"),
+    ]
+
+    # Remplace 'Company' par le nom exact de ton modèle Entreprise s'il est différent
+    entreprise = models.ForeignKey(
+        "femi_account.Entreprise",
+        on_delete=models.CASCADE,
+        related_name="echeances_fiscales",
+    )
+    type_echeance = models.CharField(
+        max_length=50, choices=TYPE_ECHEANCE_CHOICES
+    )
+    libelle = models.CharField(max_length=255)
+    date_echeance = models.DateField()
+    statut = models.CharField(
+        max_length=20, choices=STATUT_CHOICES, default="EN_ATTENTE"
+    )
+    dernier_rappel_envoye = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["date_echeance"]
+        verbose_name = "Échéance Fiscale"
+        verbose_name_plural = "Échéances Fiscales"
+
+    def __str__(self):
+        return f"{self.entreprise} - {self.libelle} ({self.date_echeance})"

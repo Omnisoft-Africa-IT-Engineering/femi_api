@@ -3,7 +3,6 @@ import logging
 import requests
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import RegisterSerializer
 from .integrations.fedapay_payment import initiate_payment, FedaPayError
@@ -12,6 +11,13 @@ logger = logging.getLogger(__name__)
 
 
 class RegisterView(APIView):
+    permission_classes = [permissions.AllowAny]
+    serializer_class = RegisterSerializer
+
+    @extend_schema(
+        request=RegisterSerializer,
+        responses={201: RegisterSerializer}
+    )
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
         if not serializer.is_valid():
