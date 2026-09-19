@@ -2,17 +2,18 @@ from rest_framework import serializers
 from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
-from .models import Utilisateur, Entreprise, Plan, Abonnement
 from django.contrib.auth import authenticate
 
+from .models import Utilisateur, Entreprise, Plan, Abonnement, EcheanceFiscale
+
+
 class RegisterSerializer(serializers.Serializer):
-    # Étape 1 : Utilisateur
+    """Inscription utilisateur + entreprise + abonnement."""
     full_name = serializers.CharField(max_length=255)
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=8)
     confirm_password = serializers.CharField(write_only=True)
 
-    # Étape 2 : Entreprise
     company_name = serializers.CharField(max_length=255)
     secteur_id = serializers.UUIDField(required=False, allow_null=True)
     type_activite = serializers.CharField(max_length=50)
@@ -21,7 +22,6 @@ class RegisterSerializer(serializers.Serializer):
     devise = serializers.CharField(default='XOF')
     phone_number = serializers.CharField(max_length=50, required=False, allow_blank=True)
 
-    # Étape 3 : Abonnement
     plan_id = serializers.UUIDField()
     mode_paiement = serializers.CharField(max_length=50)
 
@@ -34,7 +34,6 @@ class RegisterSerializer(serializers.Serializer):
 
     @transaction.atomic
     def create(self, validated_data):
-        # 1. Création de l'entreprise
         entreprise = Entreprise.objects.create(
             nom=validated_data['company_name'],
             secteur_id=validated_data.get('secteur_id'),
@@ -44,7 +43,6 @@ class RegisterSerializer(serializers.Serializer):
             devise=validated_data.get('devise', 'XOF')
         )
 
-        # 2. Création de l'utilisateur
         user = Utilisateur.objects.create_user(
             username=validated_data['email'],
             email=validated_data['email'],
@@ -54,7 +52,6 @@ class RegisterSerializer(serializers.Serializer):
             role='admin'
         )
 
-        # 3. Création de l'abonnement
         plan = Plan.objects.get(id=validated_data['plan_id'])
         date_debut = timezone.now().date()
         date_fin = date_debut + timedelta(days=plan.duree_jours)
@@ -73,25 +70,15 @@ class RegisterSerializer(serializers.Serializer):
 
 
 class PublicLoginSerializer(serializers.Serializer):
-    """
-    Serializer pour la connexion publique par Email / Mot de passe.
-    """
-    email = serializers.EmailField(
-        required=True,
-        help_text="Adresse email de l'utilisateur."
-    )
-    password = serializers.CharField(
-        write_only=True,
-        required=True,
-        help_text="Mot de passe de l'utilisateur."
-    )
+    """Connexion publique par Email / Mot de passe."""
+    email = serializers.EmailField(required=True)
+    password = serializers.CharField(write_only=True, required=True)
 
     def validate(self, attrs):
         email = attrs.get('email', '').lower().strip()
         password = attrs.get('password')
 
         if email and password:
-            # Django authenticate vérifie les identifiants en BDD
             user = authenticate(
                 request=self.context.get('request'),
                 username=email,
@@ -99,18 +86,27 @@ class PublicLoginSerializer(serializers.Serializer):
             )
 
             if not user:
-                raise serializers.ValidationError(
-                    "Email ou mot de passe incorrect."
-                )
+                raise serializers.ValidationError("Email ou mot de passe incorrect.")
             
             if not user.is_active:
-                raise serializers.ValidationError(
-                    "Ce compte est désactivé. Veuillez contacter le support."
-                )
+                raise serializers.ValidationError("Ce compte est désactivé.")
         else:
-            raise serializers.ValidationError(
-                "L'email et le mot de passe sont obligatoires."
-            )
+            raise serializers.ValidationError("L'email et le mot de passe sont obligatoires.")
 
         attrs['user'] = user
         return attrs
+
+
+class EcheanceFiscaleSerializer(serializers.ModelSerializer):
+    """Serializer CRUD pour les Échéances Fiscales."""
+    class Meta:
+        model = EcheanceFiscale
+        fields = [
+            'id',
+            'type_echeance',
+            'libelle',
+            'date_echeance',
+            'statut',
+            'dernier_rappel_envoye',
+        ]
+        read_only_fields = ['id', 'dernier_rappel_envoye']
