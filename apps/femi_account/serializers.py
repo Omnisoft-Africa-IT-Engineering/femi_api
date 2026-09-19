@@ -1,3 +1,6 @@
+import logging
+
+import requests
 from rest_framework import serializers
 from django.db import transaction
 from django.utils import timezone
@@ -29,7 +32,7 @@ class RegisterSerializer(serializers.Serializer):
         if attrs['password'] != attrs['confirm_password']:
             raise serializers.ValidationError({"confirm_password": "Les mots de passe ne correspondent pas."})
         if Utilisateur.objects.filter(email=attrs['email']).exists():
-            raise serializers.ValidationError({"email": "Cet e-mail est déjà utilisé."})
+            raise serializers.ValidationError({"email": "Cet e-mail est d??j?? utilis??."})
         return attrs
 
     @transaction.atomic
@@ -56,14 +59,14 @@ class RegisterSerializer(serializers.Serializer):
         date_debut = timezone.now().date()
         date_fin = date_debut + timedelta(days=plan.duree_jours)
 
-        Abonnement.objects.create(
+        abonnement = Abonnement.objects.create(
             entreprise=entreprise,
             plan=plan,
             prix_paye=plan.prix,
             mode_paiement=validated_data['mode_paiement'],
             date_debut=date_debut,
             date_fin=date_fin,
-            statut='ACTIF'
+            statut='EN_ATTENTE'
         )
 
         return user

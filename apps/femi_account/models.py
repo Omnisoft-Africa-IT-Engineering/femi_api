@@ -6,9 +6,9 @@ from datetime import timedelta
 from django.utils import timezone
 
 class Utilisateur(AbstractUser):
-    """Modèle d'utilisateur personnalisé pour Femi."""
+    """Mod??le d'utilisateur personnalis?? pour Femi."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    # ➕ AJOUTER CE CHAMP : Nom complet saisi à l'étape 1 du formulaire
+    # ??? AJOUTER CE CHAMP : Nom complet saisi ?? l'??tape 1 du formulaire
     full_name = models.CharField(max_length=255, blank=True, null=True)
     email = models.EmailField("email address", unique=True, blank=True, null=True)
     entreprise = models.ForeignKey(
@@ -30,21 +30,21 @@ class Utilisateur(AbstractUser):
 
 
 class Secteur(models.Model):
-    """Secteur d'activité d'une entreprise (Commerce, Restauration, etc.)."""
+    """Secteur d'activit?? d'une entreprise (Commerce, Restauration, etc.)."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     nom = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True, null=True)
 
     class Meta:
-        verbose_name = "Secteur d'activité"
-        verbose_name_plural = "Secteurs d'activité"
+        verbose_name = "Secteur d'activit??"
+        verbose_name_plural = "Secteurs d'activit??"
 
     def __str__(self):
         return self.nom
 
 
 class Entreprise(models.Model):
-    """Modèle représentant une entreprise cliente."""
+    """Mod??le repr??sentant une entreprise cliente."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     nom = models.CharField(max_length=255)
     adresse = models.CharField(max_length=255, blank=True, null=True)
@@ -55,7 +55,7 @@ class Entreprise(models.Model):
         blank=True,
         related_name="entreprises"
     )
-    # ➕ AJOUTER CES 2 CHAMPS :
+    # ??? AJOUTER CES 2 CHAMPS :
     type_activite = models.CharField(max_length=50, blank=True, null=True, help_text="ex: achatvent, depotvente, personnel")
     type_entreprise = models.CharField(max_length=50, blank=True, null=True, help_text="ex: individuel, sarl, sa, autre")
 
@@ -74,12 +74,12 @@ class Entreprise(models.Model):
 
 
 class Operation(models.Model):
-    """Opération financière ou transaction enregistrée."""
+    """Op??ration financi??re ou transaction enregistr??e."""
     TRANSACTION_TYPES = [
         ('RECETTE', 'Recette'),
-        ('DEPENSE', 'Dépense'),
-        ('PRET_DONNE', 'Prêt donné'),   # tu prêtes à quelqu'un
-        ('PRET_RECU', 'Prêt reçu'),     # on te prête
+        ('DEPENSE', 'D??pense'),
+        ('PRET_DONNE', 'Pr??t donn??'),   # tu pr??tes ?? quelqu'un
+        ('PRET_RECU', 'Pr??t re??u'),     # on te pr??te
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -107,17 +107,17 @@ class Operation(models.Model):
     )
     statut_paiement = models.CharField(
         max_length=10,
-        choices=[('PAYE', 'Payé'), ('CREDIT', 'À crédit')],
+        choices=[('PAYE', 'Pay??'), ('CREDIT', '?? cr??dit')],
         default='PAYE'
     )
     montant_paye = models.DecimalField(
         max_digits=12, decimal_places=2, default=0,
-        help_text="Cumul des paiements reçus. Pour une opération PAYE, "
+        help_text="Cumul des paiements re??us. Pour une op??ration PAYE, "
                    "correspond au montant total (voir save())."
     )
     class Meta:
-        verbose_name = "Opération"
-        verbose_name_plural = "Opérations"
+        verbose_name = "Op??ration"
+        verbose_name_plural = "Op??rations"
 
     def __str__(self):
         return f"{self.transaction_type} - {self.amount_ttc} {self.currency} ({self.entreprise.nom})"
@@ -140,11 +140,11 @@ class Niveau(models.Model):
         ordering = ['numero']
 
     def __str__(self):
-        return f"Niveau {self.numero} — {self.nom}"
+        return f"Niveau {self.numero} ??? {self.nom}"
 
 
 class Kpi(models.Model):
-    """Indicateur clé de performance, rattaché à un niveau et un secteur."""
+    """Indicateur cl?? de performance, rattach?? ?? un niveau et un secteur."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     niveau = models.ForeignKey(
         Niveau,
@@ -157,7 +157,7 @@ class Kpi(models.Model):
         related_name="kpis",
         null=True,
         blank=True,
-        help_text="Laisser vide si le KPI est commun à tous les secteurs"
+        help_text="Laisser vide si le KPI est commun ?? tous les secteurs"
     )
     nom = models.CharField(max_length=150)
     icone = models.CharField(max_length=10, blank=True, null=True)
@@ -173,14 +173,14 @@ class Kpi(models.Model):
 
 
 class InsightIA(models.Model):
-    """Résultat d'analyse généré par l'IA pour une entreprise (Niveau 5)."""
+    """R??sultat d'analyse g??n??r?? par l'IA pour une entreprise (Niveau 5)."""
     TYPE_CHOICES = [
         ('ANOMALIE', 'Anomalie'),
         ('TENDANCE', 'Tendance'),
-        ('PREVISION', 'Prévision'),
+        ('PREVISION', 'Pr??vision'),
         ('ALERTE', 'Alerte'),
         ('RECOMMANDATION', 'Recommandation'),
-        ('OPPORTUNITE', 'Opportunité'),
+        ('OPPORTUNITE', 'Opportunit??'),
     ]
     GRAVITE_CHOICES = [
         ('INFO', 'Information'),
@@ -210,10 +210,10 @@ class InsightIA(models.Model):
 
 
 class Categorie(models.Model):
-    """Catégorie de transaction, propre à une entreprise."""
+    """Cat??gorie de transaction, propre ?? une entreprise."""
     TYPE_CHOICES = [
         ('RECETTE', 'Recette'),
-        ('DEPENSE', 'Dépense'),
+        ('DEPENSE', 'D??pense'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -226,8 +226,8 @@ class Categorie(models.Model):
     type = models.CharField(max_length=10, choices=TYPE_CHOICES)
 
     class Meta:
-        verbose_name = "Catégorie"
-        verbose_name_plural = "Catégories"
+        verbose_name = "Cat??gorie"
+        verbose_name_plural = "Cat??gories"
         unique_together = ('entreprise', 'nom', 'type')
 
     def __str__(self):
@@ -260,16 +260,16 @@ class Contact(models.Model):
 
 
 class Plan(models.Model):
-    """Offre d'abonnement proposée par Femi."""
+    """Offre d'abonnement propos??e par Femi."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     nom = models.CharField(max_length=100) # Micro, Pro, Business
     description = models.TextField(blank=True, null=True) # Description courte
     prix = models.DecimalField(max_digits=10, decimal_places=2) # 10.99, 20.99, 30.99
-    est_a_partir_de = models.BooleanField(default=False, help_text="Cocher si le prix est un prix de départ ('À partir de')")
-    devise = models.CharField(max_length=5, default="EUR") # EUR (€)
+    est_a_partir_de = models.BooleanField(default=False, help_text="Cocher si le prix est un prix de d??part ('?? partir de')")
+    devise = models.CharField(max_length=5, default="EUR") # EUR (???)
     duree_jours = models.PositiveIntegerField(default=30) # 30 jours (mensuel)
     populaire = models.BooleanField(default=False, help_text="Badge 'Le plus choisi'")
-    fonctionnalites = models.JSONField(default=list, help_text="Liste des fonctionnalités incluses")
+    fonctionnalites = models.JSONField(default=list, help_text="Liste des fonctionnalit??s incluses")
     
     limite_operations_mensuelles = models.PositiveIntegerField(null=True, blank=True)
     limite_utilisateurs = models.PositiveIntegerField(null=True, blank=True)
@@ -279,15 +279,15 @@ class Plan(models.Model):
         verbose_name_plural = "Plans d'abonnement"
 
     def __str__(self):
-        prefix = "À partir de " if self.est_a_partir_de else ""
+        prefix = "?? partir de " if self.est_a_partir_de else ""
         return f"{self.nom} - {prefix}{self.prix} {self.devise}/mois"
     
 class Abonnement(models.Model):
-    """Souscription d'une Entreprise à un Plan précis."""
+    """Souscription d'une Entreprise ?? un Plan pr??cis."""
     STATUT_CHOICES = [
         ('ACTIF', 'Actif'),
-        ('EXPIRE', 'Expiré'),
-        ('ANNULE', 'Annulé'),
+        ('EXPIRE', 'Expir??'),
+        ('ANNULE', 'Annul??'),
         ('EN_ATTENTE', 'En attente'),
     ]
 
@@ -303,8 +303,10 @@ class Abonnement(models.Model):
         related_name="abonnements"
     )
     prix_paye = models.DecimalField(max_digits=10, decimal_places=2)
-    # ➕ AJOUTER CE CHAMP : Mode de règlement (Mobile Money, Carte, etc.)
+    # ??? AJOUTER CE CHAMP : Mode de r??glement (Mobile Money, Carte, etc.)
     mode_paiement = models.CharField(max_length=50, blank=True, null=True)
+    transaction_id = models.CharField(max_length=100, blank=True, null=True, unique=True)
+    payment_url = models.URLField(max_length=500, blank=True, null=True)
     date_debut = models.DateField()
     date_fin = models.DateField()
     statut = models.CharField(max_length=15, choices=STATUT_CHOICES, default='EN_ATTENTE')
@@ -332,8 +334,8 @@ class PieceJustificative(models.Model):
     date_televersement = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        verbose_name = "Pièce justificative"
-        verbose_name_plural = "Pièces justificatives"
+        verbose_name = "Pi??ce justificative"
+        verbose_name_plural = "Pi??ces justificatives"
 
     def __str__(self):
         return f"{self.nom_fichier} ({self.operation_id})"
@@ -368,9 +370,9 @@ class PrestationRealisee(models.Model):
 
 class WhatsAppLinkRequest(models.Model):
     """
-    Demande de liaison d'un numéro WhatsApp à un compte Utilisateur existant,
-    avec vérification par code OTP envoyé sur WhatsApp (protège contre
-    l'usurpation d'un numéro appartenant à quelqu'un d'autre).
+    Demande de liaison d'un num??ro WhatsApp ?? un compte Utilisateur existant,
+    avec v??rification par code OTP envoy?? sur WhatsApp (prot??ge contre
+    l'usurpation d'un num??ro appartenant ?? quelqu'un d'autre).
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     utilisateur = models.ForeignKey(
