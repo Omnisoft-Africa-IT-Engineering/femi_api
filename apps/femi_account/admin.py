@@ -14,6 +14,8 @@ from apps.femi_account.models import (
     Abonnement,
     Prestation,
     PrestationRealisee,
+    Conversation,
+    ConversationHistory,
 )
 
 
@@ -105,3 +107,28 @@ class AbonnementAdmin(admin.ModelAdmin):
     list_filter = ('statut', 'plan', 'entreprise')
     search_fields = ('entreprise__nom', 'plan__nom')
     readonly_fields = ('created_at',)
+
+
+@admin.register(Conversation)
+class ConversationAdmin(admin.ModelAdmin):
+    list_display = ('utilisateur', 'entreprise', 'canal_origine', 'created_at', 'updated_at')
+    list_filter = ('canal_origine', 'entreprise')
+    search_fields = ('utilisateur__username', 'entreprise__nom')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(ConversationHistory)
+class ConversationHistoryAdmin(admin.ModelAdmin):
+    list_display = ('conversation', 'canal', 'expediteur', 'type_message', 'created_at')
+    list_filter = ('canal', 'expediteur', 'type_message')
+    search_fields = ('contenu_texte',)
+    readonly_fields = ('created_at',)
+
+from django.contrib import admin
+from .models import EcheanceFiscale
+
+@admin.register(EcheanceFiscale)
+class EcheanceFiscaleAdmin(admin.ModelAdmin):
+    list_display = ('libelle', 'type_echeance', 'date_echeance', 'statut')
+    list_filter = ('statut', 'type_echeance')
+    search_fields = ('libelle',)
