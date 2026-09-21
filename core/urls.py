@@ -28,7 +28,7 @@ from drf_spectacular.views import (
 
 urlpatterns = [
     # 🛠️ Interface d'administration Django
-    path('admin/', admin.site.urls),
+    # path('admin/', admin.site.urls),
     
     # 📄 OpenAPI Schema & Documentation Swagger
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),

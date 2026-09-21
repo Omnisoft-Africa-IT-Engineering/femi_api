@@ -1,10 +1,22 @@
 import logging
-
 import requests
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from rest_framework import status, permissions, viewsets
+from rest_framework.decorators import action
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
-from .serializers import RegisterSerializer
+from rest_framework_simplejwt.views import TokenObtainPairView
+from drf_spectacular.utils import extend_schema
+from django.utils import timezone
+
+from .models import EcheanceFiscale
+from .serializers import (
+    RegisterSerializer,
+    PublicLoginSerializer,
+    EcheanceFiscaleSerializer,
+)
 from .integrations.fedapay_payment import initiate_payment, FedaPayError
 
 logger = logging.getLogger(__name__)
@@ -61,3 +73,34 @@ class RegisterView(APIView):
             },
             "payment": payment_info,
         }, status=status.HTTP_201_CREATED)
+
+
+class PublicLoginView(TokenObtainPairView):
+    """Login public (JWT) avec email/password."""
+    permission_classes = [AllowAny]
+
+
+class EcheanceFiscaleViewSet(viewsets.ModelViewSet):
+    """
+    Liste / détail / mise à jour des échéances fiscales de l'entreprise
+    de l'utilisateur connecté. Pas de create/delete manuel : les
+    échéances sont générées par la tâche Celery annuelle.
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = EcheanceFiscaleSerializer
+    http_method_names = ["get", "patch", "put", "head", "options"]
+
+    def get_queryset(self):
+        user = self.request.user
+        if not getattr(user, "entreprise", None):
+            return EcheanceFiscale.objects.none()
+        return EcheanceFiscale.objects.filter(entreprise=user.entreprise).order_by("date_echeance")
+
+    @action(detail=True, methods=["patch"])
+    def marquer_paye(self, request, pk=None):
+        """POST /echeances-fiscales/{id}/marquer_paye/ — marque l'échéance comme payée."""
+        echeance = self.get_object()
+        echeance.statut = "PAYE"
+        echeance.date_paiement = timezone.now()
+        echeance.save(update_fields=["statut", "date_paiement"])
+        return Response(self.get_serializer(echeance).data, status=status.HTTP_200_OK)

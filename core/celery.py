@@ -1,10 +1,13 @@
-# core/celery.py
 import os
-
 from celery import Celery
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "core.settings")
+# Définit le module de paramètres par défaut pour 'celery'
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings') # Remplace 'monprojet' par le nom de ton dossier
 
-app = Celery("core")
-app.config_from_object("django.conf:settings", namespace="CELERY")
+app = Celery('monprojet')
+
+# Charge les configurations depuis settings.py avec le préfixe 'CELERY_'
+app.config_from_object('django.conf:settings', namespace='CELERY')
+
+# Découvre automatiquement les tâches (tasks.py) dans toutes tes apps installées
 app.autodiscover_tasks()
