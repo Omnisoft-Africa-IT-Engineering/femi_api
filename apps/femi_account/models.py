@@ -366,8 +366,36 @@ class PrestationRealisee(models.Model):
         self.sous_total = self.quantite * self.prix_unitaire_facture
         super().save(*args, **kwargs)
 
+""" class EcheanceFiscale(models.Model):
+    STATUT_CHOICES = [
+        ('EN_ATTENTE', 'En attente'),
+        ('RAPPELE', 'Rappelé'),
+        ('PAYE', 'Payé'),
+        ('EN_RETARD', 'En retard'),
+    ]
 
+    TYPE_IMPOT_CHOICES = [
+        ('TPU_ACOMPTE', 'Acompte TPU & Patente'),
+        ('TPU_ANNUEL', 'Déclaration Annuelle TPU'),
+        ('TVA', 'TVA Mensuelle'),
+        ('SYSCOHADA', 'Liasse Fiscale SYSCOHADA'),
+    ]
 
+    # Remplace 'Entreprise' par ton modèle d'entreprise/utilisateur
+    entreprise = models.ForeignKey('Entreprise', on_delete=models.CASCADE, related_name='echeances')
+    libelle = models.CharField(max_length=255)
+    type_impot = models.CharField(max_length=50, choices=TYPE_IMPOT_CHOICES)
+    date_limite = models.DateField()
+    statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default='EN_ATTENTE')
+    date_paiement = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['date_limite']
+
+    def __str__(self):
+        return f"{self.libelle} - {self.date_limite} ({self.statut})"
+ """
 class WhatsAppLinkRequest(models.Model):
     """
     Demande de liaison d'un num??ro WhatsApp ?? un compte Utilisateur existant,
@@ -504,21 +532,17 @@ class EcheanceFiscale(models.Model):
         ("EN_RETARD", "En retard"),
     ]
 
-    # Remplace 'Company' par le nom exact de ton modèle Entreprise s'il est différent
     entreprise = models.ForeignKey(
         "femi_account.Entreprise",
         on_delete=models.CASCADE,
         related_name="echeances_fiscales",
     )
-    type_echeance = models.CharField(
-        max_length=50, choices=TYPE_ECHEANCE_CHOICES
-    )
+    type_echeance = models.CharField(max_length=50, choices=TYPE_ECHEANCE_CHOICES)
     libelle = models.CharField(max_length=255)
     date_echeance = models.DateField()
-    statut = models.CharField(
-        max_length=20, choices=STATUT_CHOICES, default="EN_ATTENTE"
-    )
+    statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default="EN_ATTENTE")
     dernier_rappel_envoye = models.DateTimeField(null=True, blank=True)
+    date_paiement = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -528,3 +552,83 @@ class EcheanceFiscale(models.Model):
 
     def __str__(self):
         return f"{self.entreprise} - {self.libelle} ({self.date_echeance})"
+
+# ============================================================
+# À COLLER À LA FIN de apps/femi_account/models.py
+# (après la classe EcheanceFiscale), puis :
+#   python manage.py makemigrations femi_account
+#   python manage.py migrate
+# ============================================================
+
+
+class AppareilNotification(models.Model):
+    """Téléphone d'un utilisateur, identifié par son token FCM (push)."""
+
+    PLATEFORME_CHOICES = [
+        ("ANDROID", "Android"),
+        ("IOS", "iOS"),
+        ("WEB", "Web"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    utilisateur = models.ForeignKey(
+        "Utilisateur",
+        on_delete=models.CASCADE,
+        related_name="appareils",
+    )
+    # Unique : si le même téléphone se reconnecte avec un autre compte,
+    # on réassigne le token à ce compte au lieu de le dupliquer.
+    token = models.CharField(max_length=512, unique=True)
+    plateforme = models.CharField(max_length=10, choices=PLATEFORME_CHOICES, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Appareil de notification"
+        verbose_name_plural = "Appareils de notification"
+
+    def __str__(self):
+        return f"{self.utilisateur} ({self.plateforme or '?'})"
+
+
+class Notification(models.Model):
+    """Notification affichée dans le centre de notifications de l'app."""
+
+    PALIER_CHOICES = [
+        ("J7", "7 jours avant"),
+        ("J3", "3 jours avant"),
+        ("J1", "1 jour avant"),
+        ("J0", "Jour J"),
+        ("RETARD", "Échéance dépassée"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    utilisateur = models.ForeignKey(
+        "Utilisateur",
+        on_delete=models.CASCADE,
+        related_name="notifications",
+    )
+    echeance = models.ForeignKey(
+        "EcheanceFiscale",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="notifications",
+    )
+    palier = models.CharField(max_length=10, choices=PALIER_CHOICES, blank=True)
+    titre = models.CharField(max_length=150)
+    message = models.TextField()
+    lue = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Notification"
+        verbose_name_plural = "Notifications"
+        # Empêche d'envoyer deux fois le même rappel (même utilisateur,
+        # même échéance, même palier) si la tâche est relancée.
+        unique_together = [("utilisateur", "echeance", "palier")]
+        indexes = [models.Index(fields=["utilisateur", "lue"])]
+
+    def __str__(self):
+        return f"{self.utilisateur} — {self.titre}"
