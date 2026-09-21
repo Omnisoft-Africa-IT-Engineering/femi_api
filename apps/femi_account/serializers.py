@@ -111,5 +111,6 @@ class EcheanceFiscaleSerializer(serializers.ModelSerializer):
             'date_echeance',
             'statut',
             'dernier_rappel_envoye',
+            'date_paiement',
         ]
-        read_only_fields = ['id', 'dernier_rappel_envoye']
+        read_only_fields = ['id', 'dernier_rappel_envoye', 'date_paiement']

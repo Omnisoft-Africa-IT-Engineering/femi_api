@@ -1,6 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 import io
+import logging
 
 from django.contrib.auth import authenticate
 from django.db import connection, transaction
@@ -23,6 +24,7 @@ except ImportError:
     HAS_SPECTACULAR = False
 
 from apps.femi_account.models import Contact, Entreprise, Kpi, Niveau, Operation, PrestationRealisee, Secteur, Utilisateur, WhatsAppLinkRequest
+from apps.femi_account.services import generer_echeances_otr
 from apps.femi_agent.agent.manager import FemiAgentManager
 from apps.femi_api.serializers import (
     BatchTransactionPayloadSerializer,
@@ -510,7 +512,7 @@ class RegistreJournalierAPIView(APIView):
             },
             status=status.HTTP_200_OK
         )
-    
+
 class GrandLivreAPIView(APIView):
     """
     9. ENDPOINT GRAND LIVRE SIMPLIFIÉ (GET)
@@ -874,8 +876,8 @@ class ExportTransactionAPIView(APIView):
         ws.title = "Opérations"
 
         ws.append([
-            "Date", "Type", "Catégorie", "Montant HT", "TVA", 
-            "Montant TTC", "Devise", "Fournisseur/Client", 
+            "Date", "Type", "Catégorie", "Montant HT", "TVA",
+            "Montant TTC", "Devise", "Fournisseur/Client",
             "Mode de paiement", "Description"
         ])
 
@@ -916,7 +918,7 @@ class ExportTransactionAPIView(APIView):
         ]
 
         data = [[
-            "Date", "Type", "Catégorie", "Montant TTC", 
+            "Date", "Type", "Catégorie", "Montant TTC",
             "Devise", "Fournisseur/Client", "Paiement"
         ]]
 
@@ -1584,7 +1586,11 @@ class RegisterAPIView(APIView):
 
     Champs requis : username, password, nom_entreprise.
     Champs optionnels : email, telephone_whatsapp, secteur_nom, devise,
-    rccm, ifu, regime_fiscal.
+    rccm, ifu, regime_fiscal, type_entreprise.
+
+    À l'inscription, les échéances fiscales de l'année en cours sont
+    générées pour la nouvelle entreprise (celles déjà passées avant sa
+    création sont ignorées, voir apps/femi_account/services.py).
     """
 
     authentication_classes = []
@@ -1606,6 +1612,7 @@ class RegisterAPIView(APIView):
                         "telephone_whatsapp": {"type": "string", "example": "+22890000000"},
                         "secteur_nom": {"type": "string", "example": "Commerce"},
                         "devise": {"type": "string", "example": "XOF"},
+                        "type_entreprise": {"type": "string", "example": "SARL"},
                     },
                     "required": ["username", "password", "nom_entreprise"],
                 }
@@ -1634,6 +1641,8 @@ class RegisterAPIView(APIView):
         rccm = request.data.get('rccm') or None
         ifu = request.data.get('ifu') or None
         regime_fiscal = request.data.get('regime_fiscal') or None
+        # Forme juridique envoyée par l'app : INDIVIDUEL, SARL, SA ou AUTRE.
+        type_entreprise = (request.data.get('type_entreprise') or '').strip().upper() or None
 
         # --- Validation minimale ---
         if not username or not password or not nom_entreprise:
@@ -1672,6 +1681,7 @@ class RegisterAPIView(APIView):
                     rccm=rccm,
                     ifu=ifu,
                     regime_fiscal=regime_fiscal,
+                    type_entreprise=type_entreprise,
                     devise=devise or "XOF",
                 )
 
@@ -1693,6 +1703,16 @@ class RegisterAPIView(APIView):
             return Response(
                 {"error": f"Erreur lors de la création du compte : {str(e)}"},
                 status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Génère les échéances fiscales de l'année pour cette nouvelle
+        # entreprise (celles déjà passées sont ignorées, voir services.py).
+        # Un échec ici ne doit pas empêcher l'inscription.
+        try:
+            generer_echeances_otr(entreprise, timezone.localdate().year)
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "Génération des échéances impossible à l'inscription"
             )
 
         token, _ = Token.objects.get_or_create(user=user)
