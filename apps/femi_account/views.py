@@ -20,9 +20,17 @@ from .serializers import (
 from .integrations.fedapay_payment import initiate_payment, FedaPayError
 
 logger = logging.getLogger(__name__)
+User = get_user_model()
 
+
+# ==========================================
+# 1. AUTHENTIFICATION CLASSIQUE
+# ==========================================
 
 class RegisterView(APIView):
+    """
+    Inscription classique par Email / Mot de passe avec création d'entreprise intégrée.
+    """
     permission_classes = [permissions.AllowAny]
     serializer_class = RegisterSerializer
 
@@ -62,11 +70,11 @@ class RegisterView(APIView):
                 "transaction_id": result["transaction_id"],
             }
         except (FedaPayError, requests.RequestException):
-            logger.exception("Echec d initiation du paiement FedaPay pour l abonnement %s", abonnement.id)
+            logger.exception("Échec d'initiation du paiement FedaPay pour l'abonnement %s", abonnement.id)
 
         return Response({
-            "message": "Inscription reussie. Finalisez le paiement pour activer votre abonnement." if payment_info["payment_url"]
-                       else "Inscription reussie, mais l initiation du paiement a echoue - reessayez depuis l application.",
+            "message": "Inscription réussie. Finalisez le paiement pour activer votre abonnement." if payment_info["payment_url"]
+                       else "Inscription réussie, mais l'initiation du paiement a échoué - réessayez depuis l'application.",
             "tokens": {
                 "refresh": str(refresh),
                 "access": str(refresh.access_token),
