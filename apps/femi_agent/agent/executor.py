@@ -10,7 +10,6 @@ from pydantic import ValidationError
 
 from apps.femi_agent.agent.llm import get_llm
 from apps.femi_agent.agent.prompts.accounting_prompt import ACCOUNTING_PROMPT
-from apps.femi_agent.schemas import LLMExtractionSchema, ParsedOperationSchema
 from apps.femi_agent.schemas import LLMExtractionSchema, LLMExtractionSchemaService, ParsedOperationSchema
 
 logger = logging.getLogger(__name__)
@@ -75,7 +74,7 @@ class AgentExecutor:
         return cls._get_base_prompt() | cls._get_structured_llm(schema_cls)
 
     _SECTOR_SCHEMAS = {
-        "Commerce": None,  # LLMExtractionSchemaCommerce — activé quand Produit sera prêt (décision du 09/09)
+        "Commerce général": None,  # LLMExtractionSchemaCommerce — activé quand Produit sera prêt (décision du 09/09)
         "Services": LLMExtractionSchemaService,
     }
 
@@ -89,7 +88,7 @@ class AgentExecutor:
         """
         if not catalogue:
             return ""
-        if secteur_nom == "Commerce":
+        if secteur_nom == "Commerce général":
             titre, champ, libelle = "CATALOGUE PRODUITS DE L'ENTREPRISE", "lignes_produits", "nom_produit"
         elif secteur_nom == "Services":
             titre, champ, libelle = "CATALOGUE PRESTATIONS DE L'ENTREPRISE", "lignes_prestations", "nom_prestation"
@@ -103,28 +102,6 @@ class AgentExecutor:
             f"Si un élément mentionné ne correspond à aucun nom de cette liste, ignore-le pour `{champ}` "
             f"(ne l'invente pas dans `{libelle}`)."
         )
-   
-        if not catalogue:
-            return ""
-        if secteur_nom == "Commerce":
-            titre, champ, libelle = "CATALOGUE PRODUITS DE L'ENTREPRISE", "lignes_produits", "nom_produit"
-        elif secteur_nom == "Services":
-            titre, champ, libelle = "CATALOGUE PRESTATIONS DE L'ENTREPRISE", "lignes_prestations", "nom_prestation"
-        else:
-            return ""
-        lignes = "\n".join(f"- {item['nom']} (prix habituel : {item['prix']} XOF)" for item in catalogue)
-        return (
-            f"### {titre}\n"
-            f"Si le message mentionne une transaction sur un de ces articles, remplis `{champ}` "
-            f"en utilisant EXACTEMENT un des noms suivants (jamais un nom inventé) :\n{lignes}\n"
-            f"Si un élément mentionné ne correspond à aucun nom de cette liste, ignore-le pour `{champ}` "
-            f"(ne l'invente pas dans `{libelle}`)."
-        )
-
-    @classmethod
-    def _build_chain(cls):
-        """Construit la chaîne LCEL principale (prompt | llm structuré)."""
-        return cls._get_base_prompt() | cls._get_structured_llm()
 
     @classmethod
     def execute(
@@ -173,45 +150,6 @@ class AgentExecutor:
         except Exception as e:
             logger.exception("[AgentExecutor] Échec critique de l'agent")
             raise AgentExecutionError(f"Erreur d'exécution de l'agent : {e}") from e
-        
-        
-    def execute(cls, text_input: str, tenant_name: str | None = None,secteur_nom: str | None = None,
-        catalogue: list | None = None,) -> ParsedOperationSchema:
-        """Exécution synchrone via structured output natif.
-
-        Args:
-            text_input: Texte brut à analyser (message utilisateur, OCR, ou transcription).
-            tenant_name: Nom de l'entreprise de l'utilisateur, utilisé pour lever
-                l'ambiguïté RECETTE/DEPENSE (ex: distinguer un achat d'une vente
-                sur une facture qui mentionne deux entreprises). Optionnel.
-        """
-        resolved_tenant_name = tenant_name or DEFAULT_TENANT_NAME
-        schema_cls = cls._SECTOR_SCHEMAS.get(secteur_nom, LLMExtractionSchema)
-        catalogue_section = cls._build_catalogue_section(secteur_nom, catalogue)
-        try:
-            chain = cls._build_chain()
-
-            logger.debug(
-                "[AgentExecutor] Analyse synchrone LLM pour : '%s%s'",
-                text_input[:LOG_TEXT_PREVIEW_LEN],
-                "..." if len(text_input) > LOG_TEXT_PREVIEW_LEN else "",
-            )
-            raw_result: LLMExtractionSchema = chain.invoke({
-                "input": text_input,
-                "tenant_name": resolved_tenant_name,
-                "catalogue_section": catalogue_section,
-            })
-
-            return cls._map_to_processed_schema(raw_result)
-
-        except (OutputParserException, ValidationError) as parse_err:
-            logger.warning(
-                "[AgentExecutor] Structured output invalide, passage au fallback JSON manuel : %s", parse_err
-            )
-            return cls._fallback_parse(text_input, resolved_tenant_name,catalogue_section)
-        except Exception as e:
-            logger.exception("[AgentExecutor] Échec critique de l'agent")
-            raise AgentExecutionError(f"Erreur d'exécution de l'agent : {e}") from e
 
     @classmethod
     async def aexecute(
@@ -256,41 +194,6 @@ class AgentExecutor:
                 "[AgentExecutor] Structured output invalide (async), passage au fallback JSON manuel : %s", parse_err
             )
             return cls._fallback_parse(text_input, resolved_tenant_name, catalogue_section)
-        except Exception as e:
-            logger.exception("[AgentExecutor] Échec critique asynchrone de l'agent")
-            raise AgentExecutionError(f"Erreur d'exécution asynchrone de l'agent : {e}") from e
-    async def aexecute(cls, text_input: str, tenant_name: str | None = None, secteur_nom: str | None = None,
-        catalogue: list | None = None,) -> ParsedOperationSchema:
-        """Exécution asynchrone via structured output natif.
-
-        Args:
-            text_input: Texte brut à analyser (message utilisateur, OCR, ou transcription).
-            tenant_name: Nom de l'entreprise de l'utilisateur, utilisé pour lever
-                l'ambiguïté RECETTE/DEPENSE. Optionnel.
-        """
-        resolved_tenant_name = tenant_name or DEFAULT_TENANT_NAME
-        schema_cls = cls._SECTOR_SCHEMAS.get(secteur_nom, LLMExtractionSchema)
-        catalogue_section = cls._build_catalogue_section(secteur_nom, catalogue)
-        try:
-            chain = cls._build_chain()
-
-            logger.debug(
-                "[AgentExecutor] Analyse asynchrone LLM pour : '%s%s'",
-                text_input[:LOG_TEXT_PREVIEW_LEN],
-                "..." if len(text_input) > LOG_TEXT_PREVIEW_LEN else "",
-            )
-            raw_result: LLMExtractionSchema = await chain.ainvoke({
-                "input": text_input,
-                "tenant_name": resolved_tenant_name,
-            })
-
-            return cls._map_to_processed_schema(raw_result)
-
-        except (OutputParserException, ValidationError) as parse_err:
-            logger.warning(
-                "[AgentExecutor] Structured output invalide (async), passage au fallback JSON manuel : %s", parse_err
-            )
-            return cls._fallback_parse(text_input, resolved_tenant_name)
         except Exception as e:
             logger.exception("[AgentExecutor] Échec critique asynchrone de l'agent")
             raise AgentExecutionError(f"Erreur d'exécution asynchrone de l'agent : {e}") from e
@@ -353,9 +256,19 @@ class AgentExecutor:
 
 # --- Alias de compatibilité requis par pipeline.py ---
 
-def analyze_accounting_text(text_input: str, tenant_name: str | None = None) -> ParsedOperationSchema:
-    return AgentExecutor.execute(text_input, tenant_name)
+def analyze_accounting_text(
+    text_input: str,
+    tenant_name: str | None = None,
+    secteur_nom: str | None = None,
+    catalogue: list | None = None,
+) -> ParsedOperationSchema:
+    return AgentExecutor.execute(text_input, tenant_name, secteur_nom, catalogue)
 
 
-async def aanalyze_accounting_text(text_input: str, tenant_name: str | None = None) -> ParsedOperationSchema:
-    return await AgentExecutor.aexecute(text_input, tenant_name)
+async def aanalyze_accounting_text(
+    text_input: str,
+    tenant_name: str | None = None,
+    secteur_nom: str | None = None,
+    catalogue: list | None = None,
+) -> ParsedOperationSchema:
+    return await AgentExecutor.aexecute(text_input, tenant_name, secteur_nom, catalogue)

@@ -1,10 +1,23 @@
+
+"""
+Schémas de l'ANCIEN pipeline (extraction LLM local Ollama/GBNF).
+
+Déplacé tel quel depuis l'ancien apps/femi_agent/schemas.py lors du
+passage en package schemas/ — aucune modification de logique, seulement
+de l'emplacement du fichier. Coexiste avec accounting.py (nouveau système
+Router/ACCOUNTING_PROMPT) pendant la transition.
+
+Toujours utilisé en production par manager.py / executor.py / pipeline.py
+au moment de cette réorganisation — ne pas modifier sans vérifier ces
+appelants.
+"""
+
 import logging
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 from typing import Any, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +43,8 @@ class LignePrestationExtraite(BaseModel):
     nom_prestation: str = Field(description="Nom de la prestation, doit correspondre exactement à un nom du catalogue fourni.")
     quantite: int = Field(default=1, gt=0)
     duree_minutes: Optional[int] = Field(default=None, description="Durée réelle en minutes si mentionnée.")
+
+
 class BaseOperationSchema(BaseModel):
     """Schéma de base contenant la structure commune aux transactions."""
 
@@ -90,7 +105,7 @@ class BaseOperationSchema(BaseModel):
                 logger.warning("[Schema] Date LLM invalide reçue ('%s'), défaut sur aujourd'hui", value)
                 return date.today()
         return date.today()
-    
+
     @model_validator(mode="after")
     def warn_if_pret_without_contact(self) -> "BaseOperationSchema":
         """
@@ -106,6 +121,7 @@ class BaseOperationSchema(BaseModel):
                 self.transaction_type,
             )
         return self
+
 
 class LLMExtractionSchema(BaseOperationSchema):
     """
@@ -131,7 +147,7 @@ class LLMExtractionSchema(BaseOperationSchema):
             transaction_date=self.transaction_date,
             description=self.description,
             confidence_score=self.confidence_score,
-            
+
         )
 
 
@@ -157,6 +173,7 @@ class ParsedOperationSchema(BaseOperationSchema):
             return value
         return Decimal(str(value))
 
+
 class LLMExtractionSchemaCommerce(LLMExtractionSchema):
     lignes_produits: list[LigneVenteExtraite] = Field(
         default_factory=list,
@@ -179,19 +196,3 @@ class LLMExtractionSchemaService(LLMExtractionSchema):
         parsed = super().to_parsed_schema()
         parsed.lignes_prestations = self.lignes_prestations
         return parsed
-
-class ProcessResult(BaseModel):
-    """
-    Contrat de réponse standardisé (Data Transfer Object) retourné
-    par le Manager vers les Webhooks et l'API.
-    """
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    success: bool = Field(description="Statut du succès du traitement.")
-    operation_id: Optional[str] = Field(default=None, description="UUID de l'opération enregistrée en BDD.")
-    message: str = Field(description="Message formaté destiné à l'affichage utilisateur.")
-    parsed_data: Optional[ParsedOperationSchema] = Field(default=None, description="Données extraites validées.")
-    operation_instance: Optional[Any] = Field(
-        default=None, description="Instance ORM Django liée (usage interne, non sérialisée en API)."
-    )
