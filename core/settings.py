@@ -7,6 +7,7 @@ from pathlib import Path
 from decouple import config
 from celery.schedules import crontab
 
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -175,8 +176,11 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "Africa/Lome"
 CELERY_TASK_ACKS_LATE = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+
+# Ajout de ces options pour forcer la compatibilité avec les versions antérieures de Redis (v5)
 CELERY_BROKER_TRANSPORT_OPTIONS = {
     "visibility_timeout": 3600,
+    "global_keyprefix": "femi_",
 }
 
 CELERY_BEAT_SCHEDULE = {
@@ -206,3 +210,11 @@ FEMI_PAYMENT_CALLBACK_URL = config(
     default="https://api.femi.app/api/account/payment/callback/",
 )
 FEDAPAY_WEBHOOK_SECRET = config("FEDAPAY_WEBHOOK_SECRET", default="")
+# ==========================================
+# Firebase Cloud Messaging (push notifications)
+# ==========================================
+from decouple import config  # ou `environ.Env` selon ce que tu utilises déjà
+
+FIREBASE_CREDENTIALS_PATH = os.path.join(BASE_DIR, 'firebase-credentials.json')
+
+CRON_SECRET = config("CRON_SECRET", default="")

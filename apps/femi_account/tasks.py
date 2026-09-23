@@ -4,10 +4,13 @@ from celery import shared_task
 from django.utils import timezone
 
 from .models import EcheanceFiscale, Entreprise
-from .notifications import PALIERS_JOURS, notifier, palier_pour
+from .notifications import notifier, palier_pour
 from .services import generer_echeances_otr
 
 STATUTS_OUVERTS = ["EN_ATTENTE", "RAPPELE"]
+
+# Paliers configurés à 10 jours, 5 jours et 1 jour (la veille)
+PALIERS_JOURS = [10, 5, 1]
 
 # Une échéance dépassée depuis plus longtemps que ça n'envoie pas de
 # notification "en retard" (évite une rafale sur les données anciennes
@@ -20,12 +23,15 @@ def _utilisateurs_actifs(echeance):
 
 
 def _textes_rappel(echeance, jours: int):
-    if jours == 0:
-        titre = "Échéance aujourd'hui"
-    elif jours == 1:
-        titre = "Échéance demain"
+    if jours == 1:
+        titre = "⚠️ Urgent : Demain dernière limite !"
+    elif jours == 5:
+        titre = "Échéance proche (J-5)"
+    elif jours == 10:
+        titre = "Rappel fiscal (J-10)"
     else:
-        titre = f"Échéance dans {jours} jours"
+        titre = f"Rappel d'échéance ({jours} jours)"
+        
     message = f"{echeance.libelle} — date limite : {echeance.date_echeance:%d/%m/%Y}."
     return titre, message
 
@@ -34,11 +40,11 @@ def _textes_rappel(echeance, jours: int):
 def envoyer_rappels_echeances_fiscales():
     """
     Tâche quotidienne (7h) :
-    - Rappels à J-7, J-3, J-1 et J pour les échéances non payées :
+    - Rappels à J-10, J-5 et J-1 pour les échéances non payées :
       notification dans l'app + push. Chaque palier n'est envoyé qu'une
       fois par utilisateur et par échéance (contrainte d'unicité).
     - Passe en RAPPELE les échéances EN_ATTENTE entrées dans la fenêtre
-      de 7 jours (le <= rattrape les jours où la tâche n'a pas tourné).
+      de 10 jours (le <= rattrape les jours où la tâche n'a pas tourné).
     - Notifie puis passe en EN_RETARD les échéances dépassées.
     """
     aujourdhui = timezone.localdate()
@@ -61,6 +67,11 @@ def envoyer_rappels_echeances_fiscales():
     for echeance in a_rappeler:
         jours = (echeance.date_echeance - aujourdhui).days
         palier = palier_pour(jours)
+        
+        # On ne traite que si le nombre de jours correspond exactement à un de nos paliers
+        if jours not in PALIERS_JOURS:
+            continue
+
         titre, message = _textes_rappel(echeance, jours)
 
         nouvelle = False
