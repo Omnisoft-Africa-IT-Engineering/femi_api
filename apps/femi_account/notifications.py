@@ -18,16 +18,16 @@ from .models import AppareilNotification, Notification
 
 logger = logging.getLogger(__name__)
 
-# Jours avant l'échéance où un rappel est envoyé.
-PALIERS_JOURS = (7, 3, 1, 0)
+# Jours avant l'échéance où un rappel est envoyé (10 jours, 5 jours, la veille et le jour J).
+PALIERS_JOURS = (10, 5, 1, 0)
 
 _firebase_pret = None  # None = pas encore tenté, True/False = résultat
 
 
 def palier_pour(jours_restants: int) -> str:
     """
-    Palier courant pour une échéance dans `jours_restants` jours (0 à 7).
-    Le plus petit palier >= jours_restants : 5 jours -> J7, 2 jours -> J3.
+    Palier courant pour une échéance dans `jours_restants` jours (0 à 10).
+    Le plus petit palier >= jours_restants : ex: 6 jours -> J10, 3 jours -> J5.
     Si la tâche n'a pas tourné un jour, on n'envoie que le palier courant
     (pas de rafale de rappels manqués).
     """

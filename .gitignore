@@ -21,10 +21,10 @@ staticfiles/
 .idea/
 .DS_Store
 
+# Sécurité & Fichiers sensibles (Firebase, Credentials)
+firebase-credentials.json
+credentials.json
+
 # Backups locaux
 *.bak
 _archives/
-credentials.json
-credentials.json
-credentials.json
-.env

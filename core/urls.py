@@ -26,6 +26,8 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 
+from apps.femi_account import views_cron
+
 urlpatterns = [
     # 🛠️ Interface d'administration Django
     # path('admin/', admin.site.urls),
@@ -41,4 +43,7 @@ urlpatterns = [
     # 🔗 Endpoints Application
     path('api/v1/', include('apps.femi_api.urls')),
     path('api/v1/whatsapp/', include('apps.femi_whatsapp.urls')),
+
+    path('internal/cron/rappels-echeances/', views_cron.cron_rappels_echeances, name='cron-rappels-echeances'),
+    path('internal/cron/generer-echeances/', views_cron.cron_generer_echeances, name='cron-generer-echeances'),
 ]
