@@ -8,7 +8,7 @@ services:
     startCommand: "gunicorn core.wsgi:application" # Remplace mon_projet par le nom de ton dossier Django contenant wsgi.py
     envVars:
       - key: PYTHON_VERSION
-        value: 3.10.12
+        value: 3.12.0
       - key: DEBUG
         value: "False"
       - key: SECRET_KEY
