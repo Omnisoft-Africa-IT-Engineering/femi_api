@@ -17,7 +17,11 @@ SECRET_KEY = "django-insecure-k*^^n_ssjekw7jiako25_k6+)4(h_-x(jkt$h(03qhkocg9b^f
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['.onrender.com', 'localhost', '127.0.0.1']
+ALLOWED_HOSTS = [
+    'mon-api-django-supabase.onrender.com',
+    'localhost',
+    '127.0.0.1',
+]
 
 # Application definition
 INSTALLED_APPS = [
