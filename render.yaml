@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: mon-api-django-supabase
+    env: python
+    region: frankfurt
+    plan: free
+    buildCommand: "./build.sh"
+    startCommand: "gunicorn core.wsgi:application" # Remplace mon_projet par le nom de ton dossier Django contenant wsgi.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.12
+      - key: DEBUG
+        value: "False"
+      - key: SECRET_KEY
+        generateValue: true # Render va générer une clé secrète sécurisée tout seul !
+      - key: DATABASE_URL
+        sync: false # On ira la coller à la main sur le dashboard pour plus de sécurité
