@@ -34,6 +34,7 @@ INSTALLED_APPS = [
     # REST Framework
     "rest_framework",
     "rest_framework.authtoken",
+    "rest_framework_simplejwt",
     "drf_spectacular",
 
     # Celery
@@ -158,9 +159,21 @@ WHATSAPP_ACCESS_TOKEN = config("WHATSAPP_ACCESS_TOKEN", default="")
 WHATSAPP_PHONE_NUMBER_ID = config("WHATSAPP_PHONE_NUMBER_ID", default="")
 FEMI_WHATSAPP_DISPLAY_NUMBER = config("FEMI_WHATSAPP_DISPLAY_NUMBER", default="")
 
-# LLM
+# LLM & Fournisseurs d'IA
+FEMI_LLM_PROVIDER = config("FEMI_LLM_PROVIDER", default="ollama")
 FEMI_LLM_MODEL = config("FEMI_LLM_MODEL", default="mistral")
+FEMI_VISION_MODEL = config("FEMI_VISION_MODEL", default="llava:latest")
 OLLAMA_BASE_URL = config("OLLAMA_BASE_URL", default="http://localhost:11434")
+
+MISTRAL_API_KEY = config("MISTRAL_API_KEY", default=None)
+FEMI_MISTRAL_MODEL = config("FEMI_MISTRAL_MODEL", default="mistral-small-latest")
+
+GROQ_API_KEY = config("GROQ_API_KEY", default=None)
+FEMI_GROQ_MODEL = config("FEMI_GROQ_MODEL", default="openai/gpt-oss-20b")
+
+CLOUDFLARE_ACCOUNT_ID = config("CLOUDFLARE_ACCOUNT_ID", default=None)
+CLOUDFLARE_API_KEY = config("CLOUDFLARE_API_KEY", default=None)
+FEMI_CLOUDFLARE_MODEL = config("FEMI_CLOUDFLARE_MODEL", default="@cf/meta/llama-3.3-70b-instruct-fp8-fast")
 
 CSRF_TRUSTED_ORIGINS = [
     "https://epidermal-slum-shame.ngrok-free.dev",
@@ -168,8 +181,8 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 
 # --- CELERY ---
-CELERY_BROKER_URL = "redis://localhost:6379/0"
-CELERY_RESULT_BACKEND = "redis://localhost:6379/0"
+CELERY_BROKER_URL = config("CELERY_BROKER_URL", default="redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = config("CELERY_RESULT_BACKEND", default="redis://localhost:6379/0")
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
