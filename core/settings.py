@@ -17,7 +17,7 @@ SECRET_KEY = "django-insecure-k*^^n_ssjekw7jiako25_k6+)4(h_-x(jkt$h(03qhkocg9b^f
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = ['.onrender.com', 'localhost', '127.0.0.1']
 
 # Application definition
 INSTALLED_APPS = [
@@ -231,3 +231,11 @@ from decouple import config  # ou `environ.Env` selon ce que tu utilises déjà
 FIREBASE_CREDENTIALS_PATH = os.path.join(BASE_DIR, 'firebase-credentials.json')
 
 CRON_SECRET = config("CRON_SECRET", default="")
+
+# Gestion des fichiers statiques (obligatoire pour Django sur Render)
+STATIC_URL = 'static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+
+
+# Sur Render, DEBUG doit être False
+DEBUG = os.environ.get('DEBUG', 'False') == 'True'
