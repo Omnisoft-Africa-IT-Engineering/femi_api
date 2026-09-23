@@ -19,7 +19,11 @@ DEBUG = True
 
 ALLOWED_HOSTS = ["*"]
 
+
+# ============================================================
 # Application definition
+# ============================================================
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -47,6 +51,11 @@ INSTALLED_APPS = [
     "apps.femi_whatsapp",
 ]
 
+
+# ============================================================
+# Middleware
+# ============================================================
+
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
@@ -58,9 +67,14 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
+
+# ============================================================
 # CORS
+# ============================================================
+
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
+
 CORS_ALLOW_HEADERS = [
     "accept",
     "accept-encoding",
@@ -73,6 +87,11 @@ CORS_ALLOW_HEADERS = [
     "x-requested-with",
     "ngrok-skip-browser-warning",
 ]
+
+
+# ============================================================
+# URLs / Templates
+# ============================================================
 
 ROOT_URLCONF = "core.urls"
 
@@ -93,7 +112,11 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "core.wsgi.application"
 
+
+# ============================================================
 # Database (Supabase)
+# ============================================================
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
@@ -108,33 +131,75 @@ DATABASES = {
     }
 }
 
+
+# ============================================================
 # Password validation
+# ============================================================
+
 AUTH_PASSWORD_VALIDATORS = [
-    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
-    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
-    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+    {
+        "NAME":
+        "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"
+    },
+    {
+        "NAME":
+        "django.contrib.auth.password_validation.MinimumLengthValidator"
+    },
+    {
+        "NAME":
+        "django.contrib.auth.password_validation.CommonPasswordValidator"
+    },
+    {
+        "NAME":
+        "django.contrib.auth.password_validation.NumericPasswordValidator"
+    },
 ]
 
+
+# ============================================================
 # Internationalization
+# ============================================================
+
 LANGUAGE_CODE = "en-us"
+
 TIME_ZONE = "UTC"
+
 USE_I18N = True
 USE_TZ = True
 
-# Static files
-STATIC_URL = "static/"
 
-# Email (console pour le dev)
+# ============================================================
+# Static files
+# ============================================================
+
+STATIC_URL = "/static/"
+
+# Correction pour Render / collectstatic
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+
+# ============================================================
+# Email
+# ============================================================
+
 MAILERS = {
     "default": {
         "BACKEND": "django.core.mail.backends.console.EmailBackend",
     },
 }
 
+
+# ============================================================
+# Custom User Model
+# ============================================================
+
 AUTH_USER_MODEL = "femi_account.Utilisateur"
 
-# REST Framework
+
+# ============================================================
+# Django REST Framework
+# ============================================================
+
 REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_AUTHENTICATION_CLASSES": [
@@ -145,6 +210,11 @@ REST_FRAMEWORK = {
     ],
 }
 
+
+# ============================================================
+# DRF Spectacular
+# ============================================================
+
 SPECTACULAR_SETTINGS = {
     "TITLE": "Femi Financial API",
     "DESCRIPTION": "API REST pour l'agent financier et comptable Femi (Mobile & WhatsApp)",
@@ -152,49 +222,128 @@ SPECTACULAR_SETTINGS = {
     "SERVE_INCLUDE_SCHEMA": False,
 }
 
+
+# ============================================================
 # WhatsApp
+# ============================================================
+
 WHATSAPP_VERIFY_TOKEN = config("WHATSAPP_VERIFY_TOKEN", default="")
 WHATSAPP_APP_SECRET = config("WHATSAPP_APP_SECRET", default="")
 WHATSAPP_ACCESS_TOKEN = config("WHATSAPP_ACCESS_TOKEN", default="")
 WHATSAPP_PHONE_NUMBER_ID = config("WHATSAPP_PHONE_NUMBER_ID", default="")
-FEMI_WHATSAPP_DISPLAY_NUMBER = config("FEMI_WHATSAPP_DISPLAY_NUMBER", default="")
+FEMI_WHATSAPP_DISPLAY_NUMBER = config(
+    "FEMI_WHATSAPP_DISPLAY_NUMBER",
+    default=""
+)
 
+
+# ============================================================
 # LLM & Fournisseurs d'IA
-FEMI_LLM_PROVIDER = config("FEMI_LLM_PROVIDER", default="ollama")
-FEMI_LLM_MODEL = config("FEMI_LLM_MODEL", default="mistral")
-FEMI_VISION_MODEL = config("FEMI_VISION_MODEL", default="llava:latest")
-OLLAMA_BASE_URL = config("OLLAMA_BASE_URL", default="http://localhost:11434")
+# ============================================================
 
-MISTRAL_API_KEY = config("MISTRAL_API_KEY", default=None)
-FEMI_MISTRAL_MODEL = config("FEMI_MISTRAL_MODEL", default="mistral-small-latest")
+FEMI_LLM_PROVIDER = config(
+    "FEMI_LLM_PROVIDER",
+    default="ollama"
+)
 
-GROQ_API_KEY = config("GROQ_API_KEY", default=None)
-FEMI_GROQ_MODEL = config("FEMI_GROQ_MODEL", default="openai/gpt-oss-20b")
+FEMI_LLM_MODEL = config(
+    "FEMI_LLM_MODEL",
+    default="mistral"
+)
 
-CLOUDFLARE_ACCOUNT_ID = config("CLOUDFLARE_ACCOUNT_ID", default=None)
-CLOUDFLARE_API_KEY = config("CLOUDFLARE_API_KEY", default=None)
-FEMI_CLOUDFLARE_MODEL = config("FEMI_CLOUDFLARE_MODEL", default="@cf/meta/llama-3.3-70b-instruct-fp8-fast")
+FEMI_VISION_MODEL = config(
+    "FEMI_VISION_MODEL",
+    default="llava:latest"
+)
+
+OLLAMA_BASE_URL = config(
+    "OLLAMA_BASE_URL",
+    default="http://localhost:11434"
+)
+
+MISTRAL_API_KEY = config(
+    "MISTRAL_API_KEY",
+    default=None
+)
+
+FEMI_MISTRAL_MODEL = config(
+    "FEMI_MISTRAL_MODEL",
+    default="mistral-small-latest"
+)
+
+GROQ_API_KEY = config(
+    "GROQ_API_KEY",
+    default=None
+)
+
+FEMI_GROQ_MODEL = config(
+    "FEMI_GROQ_MODEL",
+    default="openai/gpt-oss-20b"
+)
+
+CLOUDFLARE_ACCOUNT_ID = config(
+    "CLOUDFLARE_ACCOUNT_ID",
+    default=None
+)
+
+CLOUDFLARE_API_KEY = config(
+    "CLOUDFLARE_API_KEY",
+    default=None
+)
+
+FEMI_CLOUDFLARE_MODEL = config(
+    "FEMI_CLOUDFLARE_MODEL",
+    default="@cf/meta/llama-3.3-70b-instruct-fp8-fast"
+)
+
+
+# ============================================================
+# CSRF
+# ============================================================
 
 CSRF_TRUSTED_ORIGINS = [
     "https://epidermal-slum-shame.ngrok-free.dev",
     "https://shore-handiwork-croon.ngrok-free.dev",
 ]
 
-# --- CELERY ---
-CELERY_BROKER_URL = config("CELERY_BROKER_URL", default="redis://localhost:6379/0")
-CELERY_RESULT_BACKEND = config("CELERY_RESULT_BACKEND", default="redis://localhost:6379/0")
+
+# ============================================================
+# CELERY
+# ============================================================
+
+CELERY_BROKER_URL = config(
+    "CELERY_BROKER_URL",
+    default="redis://localhost:6379/0"
+)
+
+CELERY_RESULT_BACKEND = config(
+    "CELERY_RESULT_BACKEND",
+    default="redis://localhost:6379/0"
+)
+
 CELERY_ACCEPT_CONTENT = ["json"]
+
 CELERY_TASK_SERIALIZER = "json"
+
 CELERY_RESULT_SERIALIZER = "json"
+
 CELERY_TIMEZONE = "Africa/Lome"
+
 CELERY_TASK_ACKS_LATE = True
+
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 
-# Ajout de ces options pour forcer la compatibilité avec les versions antérieures de Redis (v5)
+
+# Compatibilité Redis
 CELERY_BROKER_TRANSPORT_OPTIONS = {
     "visibility_timeout": 3600,
     "global_keyprefix": "femi_",
 }
+
+
+# ============================================================
+# CELERY BEAT
+# ============================================================
 
 CELERY_BEAT_SCHEDULE = {
     "verification-quotidienne-echeances": {
@@ -203,31 +352,76 @@ CELERY_BEAT_SCHEDULE = {
     },
     "generation-annuelle-echeances-otr": {
         "task": "apps.femi_account.tasks.generer_echeances_annuelles_toutes_entreprises",
-        "schedule": crontab(0, 0, day_of_month="1", month_of_year="1"),
+        "schedule": crontab(
+            0,
+            0,
+            day_of_month="1",
+            month_of_year="1"
+        ),
     },
 }
 
-# Supabase Storage
-SUPABASE_URL = config("SUPABASE_URL", default="")
-SUPABASE_SERVICE_ROLE_KEY = config("SUPABASE_SERVICE_ROLE_KEY", default="")
-SUPABASE_STORAGE_BUCKET = config("SUPABASE_STORAGE_BUCKET", default="pieces-justificatives")
 
+# ============================================================
+# Supabase Storage
+# ============================================================
+
+SUPABASE_URL = config(
+    "SUPABASE_URL",
+    default=""
+)
+
+SUPABASE_SERVICE_ROLE_KEY = config(
+    "SUPABASE_SERVICE_ROLE_KEY",
+    default=""
+)
+
+SUPABASE_STORAGE_BUCKET = config(
+    "SUPABASE_STORAGE_BUCKET",
+    default="pieces-justificatives"
+)
+
+
+# ============================================================
 # Paiement
+# ============================================================
+
 IMMOASK_GRAPHQL_URL = config(
     "IMMOASK_GRAPHQL_URL",
     default="https://immoaskprodapi.omnisoft.africa/api/v2",
 )
-IMMOASK_API_KEY = config("IMMOASK_API_KEY", default="")
+
+IMMOASK_API_KEY = config(
+    "IMMOASK_API_KEY",
+    default=""
+)
+
 FEMI_PAYMENT_CALLBACK_URL = config(
     "FEMI_PAYMENT_CALLBACK_URL",
     default="https://api.femi.app/api/account/payment/callback/",
 )
-FEDAPAY_WEBHOOK_SECRET = config("FEDAPAY_WEBHOOK_SECRET", default="")
-# ==========================================
-# Firebase Cloud Messaging (push notifications)
-# ==========================================
-from decouple import config  # ou `environ.Env` selon ce que tu utilises déjà
 
-FIREBASE_CREDENTIALS_PATH = os.path.join(BASE_DIR, 'firebase-credentials.json')
+FEDAPAY_WEBHOOK_SECRET = config(
+    "FEDAPAY_WEBHOOK_SECRET",
+    default=""
+)
 
-CRON_SECRET = config("CRON_SECRET", default="")
+
+# ============================================================
+# Firebase Cloud Messaging
+# ============================================================
+
+FIREBASE_CREDENTIALS_PATH = os.path.join(
+    BASE_DIR,
+    "firebase-credentials.json"
+)
+
+
+# ============================================================
+# Cron
+# ============================================================
+
+CRON_SECRET = config(
+    "CRON_SECRET",
+    default=""
+)
