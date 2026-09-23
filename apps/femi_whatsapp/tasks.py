@@ -3,7 +3,7 @@ Traitement asynchrone des messages WhatsApp entrants.
 
 Pourquoi une tâche Celery et non un traitement direct dans la vue ?
 Meta considère le webhook comme en échec s'il ne répond pas rapidement
-(quelques secondes) et RÉ-ENVOIE l'événement. Or FemiAgentManager peut
+(quelques secondes) et RÉ-ENVOIE l'événement. Or FemiRouterManager peut
 appeler un LLM, transcrire de l'audio, faire de l'OCR sur une image...
 tout ça peut largement dépasser ce délai. En déléguant le traitement à
 Celery, la vue répond à Meta en quelques millisecondes (elle a juste
@@ -16,7 +16,7 @@ from celery import shared_task
 from django.core.files.base import ContentFile
 
 from apps.femi_account.models import Utilisateur
-from apps.femi_agent.agent.manager import FemiAgentManager
+from apps.femi_agent.agent.router_manager import FemiRouterManager
 from apps.femi_whatsapp.whatsapp_client import WhatsAppClient
 
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ def _normalize_phone(raw_number: str) -> str:
 def process_whatsapp_message_task(self, message: dict) -> None:
     """
     Résout l'utilisateur à partir du numéro, délègue le contenu du
-    message à FemiAgentManager, puis renvoie la réponse sur WhatsApp.
+    message à FemiRouterManager, puis renvoie la réponse sur WhatsApp.
     """
     client = WhatsAppClient()
     from_number = message.get("from")
@@ -60,14 +60,14 @@ def process_whatsapp_message_task(self, message: dict) -> None:
         )
         return
 
-    agent_kwargs = {
-        "source": "WHATSAPP",
+    router_kwargs = {
         "entreprise_id": utilisateur.entreprise_id,
         "utilisateur_id": utilisateur.id,
+        "source": "whatsapp",
     }
 
     if message_type == "text":
-        agent_kwargs["text_input"] = message.get("text", {}).get("body", "")
+        router_kwargs["message_text"] = message.get("text", {}).get("body", "")
 
     elif message_type == "image":
         media_id = message.get("image", {}).get("id")
@@ -75,8 +75,7 @@ def process_whatsapp_message_task(self, message: dict) -> None:
         if media is None:
             client.send_text_message(from_number, "⚠️ Impossible de récupérer l'image envoyée. Réessaie.")
             return
-        agent_kwargs["image_bytes"] = media.content
-        agent_kwargs["image_file"] = ContentFile(media.content, name=f"whatsapp_{media_id}{media.extension}")
+        router_kwargs["image_bytes"] = media.content
 
     elif message_type == "audio":
         media_id = message.get("audio", {}).get("id")
@@ -84,16 +83,16 @@ def process_whatsapp_message_task(self, message: dict) -> None:
         if media is None:
             client.send_text_message(from_number, "⚠️ Impossible de récupérer l'audio envoyé. Réessaie.")
             return
-        agent_kwargs["audio_bytes"] = media.content
+        router_kwargs["audio_bytes"] = media.content
 
     else:
         logger.info("Type de message WhatsApp non géré : %s", message_type)
         return
 
     try:
-        result = FemiAgentManager.process_transaction_text(**agent_kwargs)
+        result = FemiRouterManager.route_message(**router_kwargs)
     except Exception:
-        logger.exception("Échec du traitement FemiAgentManager pour %s", from_number)
+        logger.exception("Échec du traitement FemiRouterManager pour %s", from_number)
         client.send_text_message(from_number, "⚠️ Une erreur est survenue lors du traitement de votre message.")
         raise  # laisse Celery retenter selon autoretry_for
 

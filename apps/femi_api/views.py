@@ -25,7 +25,6 @@ except ImportError:
 
 from apps.femi_account.models import Contact, Entreprise, Kpi, Niveau, Operation, PrestationRealisee, Secteur, Utilisateur, WhatsAppLinkRequest
 from apps.femi_account.services import generer_echeances_otr
-from apps.femi_agent.agent.manager import FemiAgentManager
 from apps.femi_api.serializers import (
     BatchTransactionPayloadSerializer,
     OperationModelSerializer,
@@ -35,28 +34,23 @@ from apps.femi_whatsapp.tasks import _normalize_phone
 from apps.femi_whatsapp.whatsapp_client import WhatsAppClient
 
 
+from apps.femi_agent.agent.router_manager import FemiRouterManager
+# (Vous pourrez retirer l'import de FemiAgentManager si celui-ci n'est plus utilisé ailleurs)
+
 class ProcessTransactionAPIView(APIView):
     """
-    1. ENDPOINT UNIFIÉ (POST)
-    Gère la réception des transactions (Texte, Image, Audio)
-    et répond aux questions de l'utilisateur.
+    Endpoint unique pour traiter les transactions entrantes (Texte, Image, Audio)
+    provenant de l'application mobile ou du frontend.
     """
-
-    permission_classes = [IsAuthenticated]
-    parser_classes = (MultiPartParser, FormParser, JSONParser)
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
     serializer_class = TransactionPayloadSerializer
 
     if HAS_SPECTACULAR:
         @extend_schema(
-            summary="Traiter une entrée (Texte, Audio, Image)",
-            description="Reçoit une saisie utilisateur, l l'analyse via l'agent et enregistre la transaction ou renvoie une réponse.",
+            summary="Traiter une transaction entrante (Texte, Image, Audio)",
+            description="Point d'entrée unique du routeur Femi pour analyser et router les messages.",
             request=TransactionPayloadSerializer,
-            responses={
-                201: OperationModelSerializer,
-                200: OpenApiTypes.OBJECT,
-                400: OpenApiTypes.OBJECT,
-                500: OpenApiTypes.OBJECT,
-            }
+            responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT}
         )
         def post(self, request, *args, **kwargs):
             return self._handle_post(request, *args, **kwargs)
@@ -66,62 +60,44 @@ class ProcessTransactionAPIView(APIView):
 
     def _handle_post(self, request, *args, **kwargs):
         serializer = TransactionPayloadSerializer(data=request.data)
-
         if not serializer.is_valid():
-            return Response(
-                serializer.errors,
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        validated_data = serializer.validated_data
+        data = serializer.validated_data
+        
+        # Récupération sécurisée du contexte de l'entreprise et de l'utilisateur connectés
+        entreprise_id = getattr(request.user, "entreprise_id", None) or request.data.get("entreprise_id")
+        utilisateur_id = str(request.user.id) if request.user and request.user.is_authenticated else request.data.get("utilisateur_id")
 
-        text = validated_data.get('text')
-        image_file = validated_data.get('image')
-        audio_file = validated_data.get('audio')
-        source = validated_data.get('source', 'MOBILE')
-
+        image_file = data.get("image")
         image_bytes = image_file.read() if image_file else None
+        
+        audio_file = data.get("audio")
         audio_bytes = audio_file.read() if audio_file else None
 
-        result = FemiAgentManager.process_transaction_text(
-            text_input=text,
+        # Appel au nouveau pipeline unifié (Router + Agents spécialisés)
+        result = FemiRouterManager.route_message(
+            message_text=data.get("text"),
+            entreprise_id=entreprise_id,
+            utilisateur_id=utilisateur_id,
+            source="MOBILE",
             image_bytes=image_bytes,
             audio_bytes=audio_bytes,
-            image_file=image_file,
-            source=source,
-            entreprise_id=(
-                request.user.entreprise.id
-                if request.user.entreprise
-                else None
-            ),
-            utilisateur_id=request.user.id
         )
 
         if not result.success:
             return Response(
-                {"error": result.message},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                {"success": False, "message": result.message},
+                status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Question analytique ou bilan
-        if result.operation_instance is None:
-            return Response(
-                {"message": result.message},
-                status=status.HTTP_200_OK
-            )
-
-        # Transaction enregistrée
-        response_data = OperationModelSerializer(
-            result.operation_instance
-        ).data
-
-        response_data["message"] = result.message
-
-        return Response(
-            response_data,
-            status=status.HTTP_201_CREATED
-        )
-
+        return Response({
+            "success": True,
+            "message": result.message,
+            "operation_ids": result.operation_ids,
+            "needs_clarification": result.needs_clarification,
+            "missing_fields": result.missing_fields,
+        }, status=status.HTTP_200_OK)
 
 class DashboardKPIAPIView(APIView):
     """

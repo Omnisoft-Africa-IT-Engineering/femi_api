@@ -1,14 +1,26 @@
 import logging
+import os
+import json
 from functools import lru_cache
 from typing import Optional
 
 from django.conf import settings
+
 from langchain_ollama import ChatOllama
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "mistral"
 DEFAULT_BASE_URL = "http://localhost:11434"
+
+# Bascule Ollama (local) / Groq (hébergé, rapide, TPM limité en tier
+# gratuit) / Mistral (hébergé, "La Plateforme", tier gratuit généreux en
+# TPM — 500k/min par modèle) via settings.FEMI_LLM_PROVIDER. Comportement
+# par défaut inchangé (Ollama), aucun risque de régression pour l'usage
+# existant.
+DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
+DEFAULT_MISTRAL_MODEL = "mistral-small-latest"
+DEFAULT_CLOUDFLARE_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 
 
 @lru_cache(maxsize=8)
@@ -17,29 +29,61 @@ def get_llm(
     temperature: float = 0.0,
     timeout: float = 30.0,
     max_retries: int = 2,
-) -> ChatOllama:
+    num_ctx: Optional[int] = None,
+):
     """
-    Factory sécurisée et mise en cache pour instancier ChatOllama.
+    Factory sécurisée et mise en cache pour instancier le LLM.
 
     Le cache (lru_cache) évite de recréer une connexion à chaque appel :
     pour des paramètres identiques, la même instance est réutilisée.
 
+    Provider choisi via settings.FEMI_LLM_PROVIDER ("ollama" par défaut,
+    "groq" ou "mistral" pour basculer vers l'inférence hébergée) — voir
+    settings.py. num_ctx est ignoré par Groq et Mistral (paramètre propre
+    à ChatOllama, le contexte est géré côté serveur pour les deux autres).
+
     Args:
-        model_name: Nom du modèle Ollama. Fallback sur settings.FEMI_LLM_MODEL.
+        model_name: Nom du modèle. Fallback sur settings.FEMI_LLM_MODEL
+            (Ollama), settings.FEMI_GROQ_MODEL (Groq) ou
+            settings.FEMI_MISTRAL_MODEL (Mistral) selon le provider.
         temperature: Doit être comprise entre 0.0 et 1.0.
         timeout: Timeout réseau en secondes.
         max_retries: Nombre de tentatives en cas d'échec réseau.
 
     Returns:
-        Instance ChatOllama configurée.
+        Instance ChatOllama, ChatGroq ou ChatMistralAI configurée.
 
     Raises:
-        ValueError: si temperature est hors de [0.0, 1.0].
-        RuntimeError: si la connexion au service LLM échoue.
+        ValueError: si temperature est hors de [0.0, 1.0], ou si
+            FEMI_LLM_PROVIDER a une valeur inconnue.
+        RuntimeError: si la connexion au service LLM échoue, ou si une clé
+            API requise est absente.
     """
     if not 0.0 <= temperature <= 1.0:
         raise ValueError(f"temperature doit être entre 0.0 et 1.0, reçu: {temperature}")
 
+    provider = getattr(settings, "FEMI_LLM_PROVIDER", "ollama").lower()
+
+    if provider == "groq":
+        return _get_groq_llm(model_name, temperature, timeout, max_retries)
+
+    if provider == "mistral":
+        return _get_mistral_llm(model_name, temperature, timeout, max_retries)
+    
+    if provider == "cloudflare":
+        return _get_cloudflare_llm(model_name, temperature, timeout, max_retries)
+
+    if provider != "ollama":
+        raise ValueError(
+            f"FEMI_LLM_PROVIDER inconnu : '{provider}' (valeurs valides : "
+            "'ollama', 'groq', 'mistral', 'cloudflare')."
+        )
+
+    return _get_ollama_llm(model_name, temperature, timeout, max_retries, num_ctx)
+
+
+def _get_ollama_llm(model_name, temperature, timeout, max_retries, num_ctx):
+    """Instancie ChatOllama (comportement historique, inchangé)."""
     model_name = model_name or getattr(settings, "FEMI_LLM_MODEL", DEFAULT_MODEL)
     base_url = getattr(settings, "OLLAMA_BASE_URL", DEFAULT_BASE_URL)
 
@@ -55,6 +99,7 @@ def get_llm(
             temperature=temperature,
             timeout=timeout,
             max_retries=max_retries,
+            num_ctx=num_ctx,
         )
     except (ConnectionError, TimeoutError, OSError) as e:
         logger.error("[LLM Factory] Échec réseau vers '%s' (%s): %s", model_name, base_url, e)
@@ -62,3 +107,137 @@ def get_llm(
     except Exception as e:
         logger.exception("[LLM Factory] Erreur inattendue à l'initialisation de '%s'", model_name)
         raise RuntimeError(f"Erreur d'initialisation du LLM ({model_name}): {e}") from e
+
+
+def _get_groq_llm(model_name, temperature, timeout, max_retries):
+    """Instancie ChatGroq (inférence hébergée, modèles open source)."""
+    from langchain_groq import ChatGroq
+
+    model_name = model_name or getattr(settings, "FEMI_GROQ_MODEL", DEFAULT_GROQ_MODEL)
+    api_key = getattr(settings, "GROQ_API_KEY", None) or os.environ.get("GROQ_API_KEY")
+
+    if not api_key:
+        raise RuntimeError(
+            "GROQ_API_KEY manquant — définir la variable d'environnement ou "
+            "settings.GROQ_API_KEY pour utiliser FEMI_LLM_PROVIDER='groq'."
+        )
+
+    logger.debug(
+        "[LLM Factory] Instanciation ChatGroq — Model: %s | Temp: %s | Timeout: %ss",
+        model_name, temperature, timeout,
+    )
+
+    try:
+        return ChatGroq(
+            model=model_name,
+            api_key=api_key,
+            temperature=temperature,
+            timeout=timeout,
+            max_retries=max_retries,
+        )
+    except Exception as e:
+        logger.exception("[LLM Factory] Erreur inattendue à l'initialisation Groq de '%s'", model_name)
+        raise RuntimeError(f"Erreur d'initialisation du LLM Groq ({model_name}): {e}") from e
+
+
+def _get_mistral_llm(model_name, temperature, timeout, max_retries):
+    """Instancie ChatMistralAI ("La Plateforme", tier gratuit 500k TPM/modèle)."""
+    from langchain_mistralai import ChatMistralAI
+
+    model_name = model_name or getattr(settings, "FEMI_MISTRAL_MODEL", DEFAULT_MISTRAL_MODEL)
+    api_key = getattr(settings, "MISTRAL_API_KEY", None) or os.environ.get("MISTRAL_API_KEY")
+
+    if not api_key:
+        raise RuntimeError(
+            "MISTRAL_API_KEY manquant — définir la variable d'environnement ou "
+            "settings.MISTRAL_API_KEY pour utiliser FEMI_LLM_PROVIDER='mistral'."
+        )
+
+    logger.debug(
+        "[LLM Factory] Instanciation ChatMistralAI — Model: %s | Temp: %s | Timeout: %ss",
+        model_name, temperature, timeout,
+    )
+
+    try:
+        return ChatMistralAI(
+            model=model_name,
+            api_key=api_key,
+            temperature=temperature,
+            timeout=timeout,
+            max_retries=max_retries,
+        )
+    except Exception as e:
+        logger.exception("[LLM Factory] Erreur inattendue à l'initialisation Mistral de '%s'", model_name)
+        raise RuntimeError(f"Erreur d'initialisation du LLM Mistral ({model_name}): {e}") from e
+
+def _get_cloudflare_llm(model_name, temperature, timeout, max_retries):
+    """Instancie ChatOpenAI pointé sur Cloudflare Workers AI (API compatible
+    OpenAI, 10 000 Neurons/jour gratuits, sans carte bancaire)."""
+    from langchain_openai import ChatOpenAI
+
+    model_name = model_name or getattr(settings, "FEMI_CLOUDFLARE_MODEL", DEFAULT_CLOUDFLARE_MODEL)
+    account_id = getattr(settings, "CLOUDFLARE_ACCOUNT_ID", None) or os.environ.get("CLOUDFLARE_ACCOUNT_ID")
+    api_key = getattr(settings, "CLOUDFLARE_API_KEY", None) or os.environ.get("CLOUDFLARE_API_KEY")
+
+    if not account_id or not api_key:
+        raise RuntimeError(
+            "CLOUDFLARE_ACCOUNT_ID et/ou CLOUDFLARE_API_KEY manquant(s) — "
+            "définir ces variables d'environnement ou les settings correspondants "
+            "pour utiliser FEMI_LLM_PROVIDER='cloudflare'."
+        )
+
+    base_url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1"
+
+    logger.debug(
+        "[LLM Factory] Instanciation ChatOpenAI/Cloudflare — Model: %s | Temp: %s | Timeout: %ss",
+        model_name, temperature, timeout,
+    )
+
+    try:
+        return ChatOpenAI(
+            model=model_name,
+            api_key=api_key,
+            base_url=base_url,
+            temperature=temperature,
+            timeout=timeout,
+            max_retries=max_retries,
+            max_tokens=4096,
+        )
+    except Exception as e:
+        logger.exception("[LLM Factory] Erreur inattendue à l'initialisation Cloudflare de '%s'", model_name)
+        raise RuntimeError(f"Erreur d'initialisation du LLM Cloudflare ({model_name}): {e}") from e
+
+
+def call_cloudflare_native_vision(model_name: str, prompt_text: str, message_text: str, image_b64: str) -> str:
+    """Appelle l'API native Cloudflare Workers AI (/ai/run/..., PAS la couche
+    compatible OpenAI /ai/v1) pour les modèles vision — la couche OpenAI échoue
+    (Internal Server Error 3030) avec l'entrée image_url pour ces modèles, voir
+    session du 22/09. Retourne le texte brut de result.response."""
+    import requests
+
+    account_id = getattr(settings, "CLOUDFLARE_ACCOUNT_ID", None) or os.environ.get("CLOUDFLARE_ACCOUNT_ID")
+    api_key = getattr(settings, "CLOUDFLARE_API_KEY", None) or os.environ.get("CLOUDFLARE_API_KEY")
+    if not account_id or not api_key:
+        raise RuntimeError("CLOUDFLARE_ACCOUNT_ID et/ou CLOUDFLARE_API_KEY manquant(s).")
+
+    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model_name}"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    payload = {
+        "messages": [
+            {"role": "system", "content": prompt_text},
+            {"role": "user", "content": [
+                {"type": "text", "text": message_text + "\n\nRéponds UNIQUEMENT avec l'objet JSON demandé, sans aucun texte avant ou après, sans description de l'image."},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
+            ]},
+        ],
+        "max_tokens": 2048,
+    }
+    response = requests.post(url, headers=headers, json=payload, timeout=60)
+    response.raise_for_status()
+    data = response.json()
+    if not data.get("success"):
+        raise RuntimeError(f"Échec API native Cloudflare : {data.get('errors')}")
+    response = data["result"]["response"]
+    if isinstance(response, dict):
+        return json.dumps(response, ensure_ascii=False)
+    return response

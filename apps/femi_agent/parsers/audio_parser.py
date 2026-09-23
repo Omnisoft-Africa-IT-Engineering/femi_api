@@ -3,10 +3,23 @@ import os
 import tempfile
 from functools import lru_cache
 
-import whisper
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _load_whisper():
+    """Importe Whisper uniquement lorsque la transcription est demandée."""
+    try:
+        from importlib import import_module
+
+        return import_module("whisper")
+    except ImportError as e:
+        logger.exception("Le paquet openai-whisper est introuvable.")
+        raise ValueError(
+            "Le serveur audio n'est pas correctement configuré "
+            "(paquet openai-whisper manquant)."
+        ) from e
 
 
 @lru_cache()
@@ -14,7 +27,7 @@ def get_whisper_model():
     """Charge (une seule fois, en cache) le modèle Whisper configuré."""
     model_name = getattr(settings, "FEMI_WHISPER_MODEL", "base")
     logger.info("Chargement du modèle Whisper : %s", model_name)
-    return whisper.load_model(model_name)
+    return _load_whisper().load_model(model_name)
 
 
 def transcribe_audio(audio_bytes: bytes, file_extension: str = ".ogg") -> str:
