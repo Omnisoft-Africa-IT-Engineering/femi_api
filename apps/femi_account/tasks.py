@@ -4,7 +4,7 @@ from celery import shared_task
 from django.utils import timezone
 
 from .models import EcheanceFiscale, Entreprise
-from .notifications import notifier, palier_pour
+from .notifications import PALIERS_JOURS, notifier, palier_pour
 from .services import generer_echeances_otr
 
 STATUTS_OUVERTS = ["EN_ATTENTE", "RAPPELE"]

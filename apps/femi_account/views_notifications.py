@@ -1,5 +1,27 @@
 """
 apps/femi_account/views_notifications.py
+
+Endpoints du centre de notifications et de l'enregistrement des appareils.
+L'authentification (Token) et IsAuthenticated viennent des réglages DRF
+par défaut de settings.py.
+
+URLs à ajouter dans votre fichier urls (adaptez le préfixe à votre
+arborescence : les URLs de l'app account sont sous /api/account/ d'après
+FEMI_PAYMENT_CALLBACK_URL) :
+
+    from django.urls import path
+    from apps.femi_account import views_notifications as vn
+
+    path("notifications/", vn.liste_notifications),
+    path("notifications/non-lues/", vn.nombre_non_lues),
+    path("notifications/tout-lire/", vn.tout_marquer_lu),
+    path("notifications/appareils/", vn.appareil),
+    path("notifications/<uuid:notification_id>/lue/", vn.marquer_lue),
+"""
+
+from django.shortcuts import get_object_or_404
+from rest_framework import serializers, status
+from rest_framework.decorators import api_view
 """
 
 from django.shortcuts import get_object_or_404
