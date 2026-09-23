@@ -17,11 +17,7 @@ SECRET_KEY = "django-insecure-k*^^n_ssjekw7jiako25_k6+)4(h_-x(jkt$h(03qhkocg9b^f
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = [
-    'mon-api-django-supabase.onrender.com',
-    'localhost',
-    '127.0.0.1',
-]
+ALLOWED_HOSTS = ["*"]
 
 # Application definition
 INSTALLED_APPS = [
@@ -38,7 +34,6 @@ INSTALLED_APPS = [
     # REST Framework
     "rest_framework",
     "rest_framework.authtoken",
-    "rest_framework_simplejwt",
     "drf_spectacular",
 
     # Celery
@@ -163,21 +158,9 @@ WHATSAPP_ACCESS_TOKEN = config("WHATSAPP_ACCESS_TOKEN", default="")
 WHATSAPP_PHONE_NUMBER_ID = config("WHATSAPP_PHONE_NUMBER_ID", default="")
 FEMI_WHATSAPP_DISPLAY_NUMBER = config("FEMI_WHATSAPP_DISPLAY_NUMBER", default="")
 
-# LLM & Fournisseurs d'IA
-FEMI_LLM_PROVIDER = config("FEMI_LLM_PROVIDER", default="ollama")
+# LLM
 FEMI_LLM_MODEL = config("FEMI_LLM_MODEL", default="mistral")
-FEMI_VISION_MODEL = config("FEMI_VISION_MODEL", default="llava:latest")
 OLLAMA_BASE_URL = config("OLLAMA_BASE_URL", default="http://localhost:11434")
-
-MISTRAL_API_KEY = config("MISTRAL_API_KEY", default=None)
-FEMI_MISTRAL_MODEL = config("FEMI_MISTRAL_MODEL", default="mistral-small-latest")
-
-GROQ_API_KEY = config("GROQ_API_KEY", default=None)
-FEMI_GROQ_MODEL = config("FEMI_GROQ_MODEL", default="openai/gpt-oss-20b")
-
-CLOUDFLARE_ACCOUNT_ID = config("CLOUDFLARE_ACCOUNT_ID", default=None)
-CLOUDFLARE_API_KEY = config("CLOUDFLARE_API_KEY", default=None)
-FEMI_CLOUDFLARE_MODEL = config("FEMI_CLOUDFLARE_MODEL", default="@cf/meta/llama-3.3-70b-instruct-fp8-fast")
 
 CSRF_TRUSTED_ORIGINS = [
     "https://epidermal-slum-shame.ngrok-free.dev",
@@ -185,8 +168,8 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 
 # --- CELERY ---
-CELERY_BROKER_URL = config("CELERY_BROKER_URL", default="redis://localhost:6379/0")
-CELERY_RESULT_BACKEND = config("CELERY_RESULT_BACKEND", default="redis://localhost:6379/0")
+CELERY_BROKER_URL = "redis://localhost:6379/0"
+CELERY_RESULT_BACKEND = "redis://localhost:6379/0"
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
@@ -235,11 +218,3 @@ from decouple import config  # ou `environ.Env` selon ce que tu utilises déjà
 FIREBASE_CREDENTIALS_PATH = os.path.join(BASE_DIR, 'firebase-credentials.json')
 
 CRON_SECRET = config("CRON_SECRET", default="")
-
-# Gestion des fichiers statiques (obligatoire pour Django sur Render)
-STATIC_URL = 'static/'
-STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
-
-
-# Sur Render, DEBUG doit être False
-DEBUG = os.environ.get('DEBUG', 'False') == 'True'
