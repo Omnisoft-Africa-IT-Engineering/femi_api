@@ -418,10 +418,24 @@ class RegistreJournalierAPIView(APIView):
         @extend_schema(
             summary="Registre journalier (écritures + totaux sur une plage de dates)",
             parameters=[
-                OpenApiParameter(name='date_debut', type=OpenApiTypes.DATE, location=OpenApiParameter.QUERY, required=False),
-                OpenApiParameter(name='date_fin', type=OpenApiTypes.DATE, location=OpenApiParameter.QUERY, required=False),
+                OpenApiParameter(
+                    name='date_debut',
+                    type=OpenApiTypes.DATE,
+                    location=OpenApiParameter.QUERY,
+                    required=False
+                ),
+                OpenApiParameter(
+                    name='date_fin',
+                    type=OpenApiTypes.DATE,
+                    location=OpenApiParameter.QUERY,
+                    required=False
+                ),
             ],
-            responses={200: OpenApiTypes.OBJECT, 400: OpenApiTypes.OBJECT, 404: OpenApiTypes.OBJECT}
+            responses={
+                200: OpenApiTypes.OBJECT,
+                400: OpenApiTypes.OBJECT,
+                404: OpenApiTypes.OBJECT
+            }
         )
         def get(self, request, *args, **kwargs):
             return self._handle_get(request, *args, **kwargs)
@@ -431,6 +445,7 @@ class RegistreJournalierAPIView(APIView):
 
     def _handle_get(self, request, *args, **kwargs):
         entreprise = request.user.entreprise
+
         if not entreprise:
             return Response(
                 {"error": "Aucune entreprise configurée"},
@@ -440,55 +455,157 @@ class RegistreJournalierAPIView(APIView):
         date_debut = request.query_params.get('date_debut')
         date_fin = request.query_params.get('date_fin')
 
-        queryset = Operation.objects.filter(entreprise=entreprise)
+        queryset = Operation.objects.filter(
+            entreprise=entreprise
+        )
 
         if date_debut:
-            queryset = queryset.filter(transaction_date__gte=date_debut)
+            queryset = queryset.filter(
+                transaction_date__gte=date_debut
+            )
+
         if date_fin:
-            queryset = queryset.filter(transaction_date__lte=date_fin)
+            queryset = queryset.filter(
+                transaction_date__lte=date_fin
+            )
 
         queryset = queryset.order_by('-transaction_date')
 
+        # ============================================================
+        # CALCUL DES TOTAUX
+        # ============================================================
+
         totaux = queryset.aggregate(
             total_recettes=Coalesce(
-                Sum("amount_ttc", filter=Q(transaction_type__iexact="RECETTE")),
+                Sum(
+                    "amount_ttc",
+                    filter=Q(
+                        transaction_type__iexact="RECETTE"
+                    )
+                ),
                 Decimal("0.00"),
             ),
+
             total_depenses=Coalesce(
-                Sum("amount_ttc", filter=Q(transaction_type__iexact="DEPENSE")),
+                Sum(
+                    "amount_ttc",
+                    filter=Q(
+                        transaction_type__iexact="DEPENSE"
+                    )
+                ),
                 Decimal("0.00"),
             ),
         )
+
         total_recettes = totaux["total_recettes"]
         total_depenses = totaux["total_depenses"]
 
-        # IMPORTANT : on construit ici manuellement les clés attendues
-        # par le frontend Flutter (id, type, montant, date, heure,
-        # titre, categorie) — pas de serializer générique.
+        # ============================================================
+        # CONSTRUCTION DES ÉCRITURES
+        # ============================================================
+        #
+        # IMPORTANT :
+        # On conserve ici le vrai transaction_type enregistré
+        # dans la base de données.
+        #
+        # RECETTE     → RECETTE
+        # DEPENSE     → DEPENSE
+        # PRET_DONNE  → PRET_DONNE
+        # PRET_RECU   → PRET_RECU
+        #
+        # On ne transforme plus automatiquement tout ce qui
+        # n'est pas RECETTE en DEPENSE.
+        # ============================================================
+
         ecritures = []
+
         for op in queryset:
-            est_recette = (op.transaction_type or "").upper() in ("RECETTE", "INCOME")
+            type_operation = (
+                (op.transaction_type or "").upper()
+            )
+
+            if type_operation == "RECETTE":
+                libelle_type = "Recette"
+
+            elif type_operation == "DEPENSE":
+                libelle_type = "Dépense"
+
+            elif type_operation == "PRET_DONNE":
+                libelle_type = "Prêt donné"
+
+            elif type_operation == "PRET_RECU":
+                libelle_type = "Prêt reçu"
+
+            else:
+                libelle_type = (
+                    type_operation
+                    if type_operation
+                    else "Opération"
+                )
+
             ecritures.append({
                 "id": str(op.id),
-                "type": "RECETTE" if est_recette else "DEPENSE",
-                "date": op.transaction_date.isoformat() if op.transaction_date else "",
-                "heure": op.created_at.strftime("%H:%M") if hasattr(op, "created_at") and op.created_at else "",
-                "titre": op.description or op.vendor_or_client or op.category or ("Recette" if est_recette else "Dépense"),
-                "categorie": op.category or ("Recette" if est_recette else "Dépense"),
-                "montant": float(op.amount_ttc) if op.amount_ttc is not None else 0.0,
+
+                # IMPORTANT :
+                # On renvoie le vrai type de l'opération.
+                "type": type_operation,
+
+                "date": (
+                    op.transaction_date.isoformat()
+                    if op.transaction_date
+                    else ""
+                ),
+
+                "heure": (
+                    op.created_at.strftime("%H:%M")
+                    if hasattr(op, "created_at")
+                    and op.created_at
+                    else ""
+                ),
+
+                "titre": (
+                    op.description
+                    or op.vendor_or_client
+                    or op.category
+                    or libelle_type
+                ),
+
+                "categorie": (
+                    op.category
+                    or libelle_type
+                ),
+
+                "montant": (
+                    float(op.amount_ttc)
+                    if op.amount_ttc is not None
+                    else 0.0
+                ),
             })
+
+        # ============================================================
+        # RÉPONSE
+        # ============================================================
 
         return Response(
             {
                 "devise": entreprise.devise or "XOF",
-                "total_recettes": float(total_recettes),
-                "total_depenses": float(total_depenses),
-                "solde": float(total_recettes - total_depenses),
+
+                "total_recettes": float(
+                    total_recettes
+                ),
+
+                "total_depenses": float(
+                    total_depenses
+                ),
+
+                "solde": float(
+                    total_recettes - total_depenses
+                ),
+
                 "ecritures": ecritures,
             },
             status=status.HTTP_200_OK
         )
-
 class GrandLivreAPIView(APIView):
     """
     9. ENDPOINT GRAND LIVRE SIMPLIFIÉ (GET)
