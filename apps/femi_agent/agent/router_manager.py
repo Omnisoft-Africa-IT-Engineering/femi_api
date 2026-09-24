@@ -45,6 +45,7 @@ from apps.femi_agent.agent.manager import FemiAgentManager
 from apps.femi_agent.agent.accounting_manager import (
     save_accounting_transactions,
 )
+from apps.femi_agent.constants import GREETING_PATTERN
 
 from apps.femi_account.integrations.supabase_storage import upload_file
 
@@ -139,6 +140,18 @@ class FemiRouterManager:
                 entreprise_id,
                 utilisateur_id,
             )
+
+            # ----------------------------------------------------
+            # 1bis. Court-circuit salutation (voir route_message)
+            # ----------------------------------------------------
+
+            if (
+                message_text
+                and not image_bytes
+                and not audio_bytes
+                and cls._is_pure_greeting(message_text.strip())
+            ):
+                return cls._greeting_result()
 
             # ----------------------------------------------------
             # 2. Construction du texte final
@@ -272,6 +285,20 @@ class FemiRouterManager:
                     utilisateur_id,
                 )
             )
+
+            # ----------------------------------------------------
+            # 1bis. Court-circuit salutation (pas d'image/audio,
+            # message très court type "Salut Femi") — évite un
+            # appel LLM inutile et répond immédiatement.
+            # ----------------------------------------------------
+
+            if (
+                message_text
+                and not image_bytes
+                and not audio_bytes
+                and cls._is_pure_greeting(message_text.strip())
+            ):
+                return cls._greeting_result()
 
             # ----------------------------------------------------
             # 2. Texte final
@@ -878,6 +905,153 @@ class FemiRouterManager:
         return None, True
 
     # ============================================================
+    # SALUTATIONS (court-circuit, avant tout appel LLM)
+    # ============================================================
+
+    @classmethod
+    def _is_pure_greeting(cls, text: str) -> bool:
+        """Même règle que FemiAgentManager._is_pure_greeting (ancien
+        pipeline) : au plus 3 mots, dont le début matche GREETING_PATTERN.
+        Reprise à l'identique pour un comportement cohérent entre les deux
+        pipelines."""
+        words = text.split()
+        return len(words) <= 3 and bool(GREETING_PATTERN.search(text))
+
+    @staticmethod
+    def _greeting_result() -> RouterProcessResult:
+        return RouterProcessResult(
+            success=True,
+            message=(
+                "👋 *Bonjour !* Je suis Femi, ton assistant financier.\n\n"
+                "• Envoie-moi une transaction (ex: *Vente de 2 sacs à 15000 FCFA*).\n"
+                "• Ou pose-moi une question (ex: *Combien j'ai vendu aujourd'hui ?*)."
+            ),
+        )
+
+    # ============================================================
+    # CONSTRUCTION DU MESSAGE FINAL EN LANGAGE NATUREL
+    # ============================================================
+    #
+    # Sans ceci, RouterProcessResult.message était une chaîne fixe
+    # ("Message routé avec succès.") quel que soit le résultat réel —
+    # l'utilisateur recevait la même phrase pour une transaction
+    # enregistrée, une vraie réponse d'analyse financière (pourtant déjà
+    # rédigée par le LLM dans FinalAnswerOutput.answer), ou une question
+    # hors-sujet. Les méthodes ci-dessous assemblent un message réellement
+    # représentatif, à partir des résultats déjà collectés par
+    # _build_result()/_abuild_result().
+
+    _TRANSACTION_TYPE_LABELS = {
+        "RECETTE": "Recette",
+        "DEPENSE": "Dépense",
+        "PRET_DONNE": "Prêt donné",
+        "PRET_RECU": "Prêt reçu",
+    }
+
+    @staticmethod
+    def _format_montant(amount, currency: Optional[str]) -> str:
+        devise = currency or "FCFA"
+        if amount is None:
+            return f"montant non précisé ({devise})"
+        formatted = f"{amount:,.0f}".replace(",", " ")
+        return f"{formatted} {devise}"
+
+    @classmethod
+    def _summarize_accounting_transactions(cls, result: AccountingExtractionResult) -> list[str]:
+        lines = []
+        for txn in result.transactions:
+            label = cls._TRANSACTION_TYPE_LABELS.get(txn.transaction_type, txn.transaction_type)
+            montant = cls._format_montant(txn.amount_ttc, txn.currency)
+            extra = f" ({txn.category})" if txn.category else ""
+            contact = f" — {txn.contact}" if txn.contact else ""
+            lines.append(f"✅ {label} de {montant}{extra}{contact} enregistrée.")
+        return lines
+
+    @classmethod
+    def _summarize_customer_payment(cls, result: CustomerExtractionOutput) -> str:
+        montant = cls._format_montant(result.amount_ttc, result.currency)
+        contact = result.contact or "ce contact"
+        return f"✅ Paiement de {montant} enregistré pour {contact}."
+
+    @staticmethod
+    def _summarize_propose_change(result: AccountingModifyProposeChangeResult) -> str:
+        if result.action_type == "DELETE":
+            return (
+                f"🗑️ Je propose de supprimer cette opération : {result.current_values}. "
+                "Confirmes-tu ?"
+            )
+        return (
+            f"✏️ Je propose de modifier cette opération : {result.proposed_values}. "
+            "Confirmes-tu ?"
+        )
+
+    @staticmethod
+    def _summarize_candidates(result: AccountingModifyResolutionResult) -> str:
+        if not result.candidates:
+            return "Je n'ai trouvé aucune opération correspondante."
+        candidats = "\n".join(f"- {c.summary}" for c in result.candidates)
+        return f"Plusieurs opérations correspondent, laquelle veux-tu modifier/supprimer ?\n{candidats}"
+
+    @classmethod
+    def _build_final_message(
+        cls,
+        accounting_results: list[AccountingExtractionResult],
+        financial_analyst_results: list,
+        accounting_modify_results: list,
+        customer_results: list,
+        needs_clarification: bool,
+        missing_fields: list[str],
+    ) -> str:
+        """Assemble le message réellement envoyé à l'utilisateur (WhatsApp et
+        application mobile) à partir des résultats structurés des agents."""
+        lines: list[str] = []
+
+        # 1. Réponses conversationnelles déjà rédigées par un agent
+        #    (FinancialAnalystExecutor ou sous-flux READ de CustomerExecutor).
+        for result in list(financial_analyst_results) + list(customer_results):
+            if isinstance(result, FinalAnswerOutput):
+                lines.append(result.answer)
+
+        # 2. Transactions comptables effectivement enregistrées (ACCOUNTING).
+        for result in accounting_results:
+            if not result.needs_clarification:
+                lines.extend(cls._summarize_accounting_transactions(result))
+
+        # 3. Paiement client/fournisseur enregistré (CUSTOMER, sous-flux CREATE).
+        for result in customer_results:
+            if isinstance(result, CustomerExtractionOutput) and not result.needs_clarification:
+                lines.append(cls._summarize_customer_payment(result))
+
+        # 4. Propositions de modification/suppression (ACCOUNTING_MODIFY),
+        #    ou liste de candidats en cas d'ambiguïté.
+        for result in accounting_modify_results:
+            if isinstance(result, AccountingModifyProposeChangeResult):
+                lines.append(cls._summarize_propose_change(result))
+            elif isinstance(result, AccountingModifyResolutionResult) and result.candidates:
+                lines.append(cls._summarize_candidates(result))
+
+        if lines:
+            return "\n\n".join(lines)
+
+        # 5. Rien de concret à annoncer : soit une clarification est
+        #    nécessaire, soit la demande n'a pas pu être rattachée à un agent
+        #    connu (question hors-sujet, intent SETTINGS/UNKNOWN...).
+        if needs_clarification:
+            if missing_fields:
+                champs = ", ".join(missing_fields)
+                return (
+                    "Il me manque quelques informations pour continuer : "
+                    f"{champs}. Peux-tu préciser ?"
+                )
+            return "Je n'ai pas toutes les informations nécessaires. Peux-tu préciser ta demande ?"
+
+        return (
+            "Je n'ai pas compris ta demande 🙂 Je peux t'aider à enregistrer une "
+            "transaction, répondre à une question sur tes finances, ou gérer tes "
+            "clients et fournisseurs — n'hésite pas à reformuler."
+        )
+
+    # ============================================================
     # CONSTRUCTION RESULTAT SYNCHRONE
     # ============================================================
 
@@ -1411,7 +1585,14 @@ class FemiRouterManager:
 
         return RouterProcessResult(
             success=True,
-            message="Message routé avec succès.",
+            message=cls._build_final_message(
+                accounting_results=accounting_results,
+                financial_analyst_results=financial_analyst_results,
+                accounting_modify_results=accounting_modify_results,
+                customer_results=customer_results,
+                needs_clarification=needs_clarification,
+                missing_fields=missing_fields,
+            ),
             router_output=router_output,
             operation_ids=operation_ids,
             needs_clarification=needs_clarification,
@@ -1814,7 +1995,14 @@ class FemiRouterManager:
 
         return RouterProcessResult(
             success=True,
-            message="Message routé avec succès.",
+            message=cls._build_final_message(
+                accounting_results=accounting_results,
+                financial_analyst_results=financial_analyst_results,
+                accounting_modify_results=accounting_modify_results,
+                customer_results=customer_results,
+                needs_clarification=needs_clarification,
+                missing_fields=missing_fields,
+            ),
             router_output=router_output,
             operation_ids=operation_ids,
             needs_clarification=needs_clarification,
