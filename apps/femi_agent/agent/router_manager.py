@@ -128,6 +128,7 @@ class FemiRouterManager:
     ) -> RouterProcessResult:
 
         try:
+
             # ----------------------------------------------------
             # 1. Résolution du tenant et de l'utilisateur
             # ----------------------------------------------------
@@ -159,10 +160,6 @@ class FemiRouterManager:
 
             # ----------------------------------------------------
             # 4. Dispatch + persistance
-            #
-            # IMPORTANT :
-            # on transmet maintenant toutes les informations
-            # nécessaires à _abuild_result().
             # ----------------------------------------------------
 
             return await cls._abuild_result(
@@ -264,6 +261,7 @@ class FemiRouterManager:
     ) -> RouterProcessResult:
 
         try:
+
             # ----------------------------------------------------
             # 1. Résolution tenant + utilisateur
             # ----------------------------------------------------
@@ -285,12 +283,24 @@ class FemiRouterManager:
                 audio_bytes,
             )
 
+            logger.info(
+                "[FemiRouterManager] "
+                "Message final envoyé au Router: %s",
+                combined_text,
+            )
+
             # ----------------------------------------------------
             # 3. Routage
             # ----------------------------------------------------
 
             router_output = RouterExecutor.execute(
                 combined_text
+            )
+
+            logger.info(
+                "[FemiRouterManager] "
+                "Router terminé. Nombre d'intents=%s",
+                len(router_output.intents),
             )
 
             # ----------------------------------------------------
@@ -693,11 +703,34 @@ class FemiRouterManager:
         entreprise: Entreprise,
     ) -> Tuple[DispatchResult, bool]:
 
+        logger.info(
+            "[FemiRouterManager] "
+            "Dispatch intent: agent=%s | segment=%s",
+            intent.agent,
+            intent.raw_segment,
+        )
+
         if intent.agent == "ACCOUNTING":
 
             result = AccountingExecutor.execute(
                 intent.raw_segment,
                 entreprise,
+            )
+
+            logger.info(
+                "[FemiRouterManager] "
+                "AccountingExecutor résultat=%s",
+                result,
+            )
+
+            logger.info(
+                "[FemiRouterManager] "
+                "Accounting needs_clarification=%s",
+                getattr(
+                    result,
+                    "needs_clarification",
+                    None,
+                ),
             )
 
             return (
@@ -859,6 +892,31 @@ class FemiRouterManager:
         image_bytes: Optional[bytes] = None,
     ) -> RouterProcessResult:
 
+        logger.info("=" * 80)
+        logger.info(
+            "[FemiRouterManager] >>> DEBUT _build_result"
+        )
+
+        logger.info(
+            "[FemiRouterManager] entreprise_id=%s",
+            getattr(entreprise, "id", None),
+        )
+
+        logger.info(
+            "[FemiRouterManager] utilisateur_id=%s",
+            getattr(utilisateur, "id", None),
+        )
+
+        logger.info(
+            "[FemiRouterManager] source=%s",
+            source,
+        )
+
+        logger.info(
+            "[FemiRouterManager] raw_text=%s",
+            raw_text,
+        )
+
         needs_clarification = False
         missing_fields: list[str] = []
 
@@ -883,11 +941,59 @@ class FemiRouterManager:
             | FinalAnswerOutput
         ] = []
 
+        logger.info(
+            "[FemiRouterManager] "
+            "Nombre d'intents=%s",
+            len(router_output.intents),
+        )
+
         # --------------------------------------------------------
         # Dispatch
         # --------------------------------------------------------
 
-        for intent in router_output.intents:
+        for index, intent in enumerate(
+            router_output.intents,
+            start=1,
+        ):
+
+            logger.info("-" * 70)
+
+            logger.info(
+                "[FemiRouterManager] "
+                ">>> INTENT #%s",
+                index,
+            )
+
+            logger.info(
+                "[FemiRouterManager] agent=%s",
+                intent.agent,
+            )
+
+            logger.info(
+                "[FemiRouterManager] action=%s",
+                getattr(
+                    intent,
+                    "action",
+                    None,
+                ),
+            )
+
+            logger.info(
+                "[FemiRouterManager] raw_segment=%s",
+                intent.raw_segment,
+            )
+
+            logger.info(
+                "[FemiRouterManager] "
+                "intent.needs_clarification=%s",
+                intent.needs_clarification,
+            )
+
+            logger.info(
+                "[FemiRouterManager] "
+                "intent.missing_fields=%s",
+                intent.missing_fields,
+            )
 
             if intent.needs_clarification:
                 needs_clarification = True
@@ -897,11 +1003,50 @@ class FemiRouterManager:
                 if field not in missing_fields:
                     missing_fields.append(field)
 
-            result, dispatch_needs_clarification = (
-                cls._dispatch_intent(
-                    intent,
-                    entreprise,
+            # ----------------------------------------------------
+            # Dispatch agent
+            # ----------------------------------------------------
+
+            try:
+
+                result, dispatch_needs_clarification = (
+                    cls._dispatch_intent(
+                        intent,
+                        entreprise,
+                    )
                 )
+
+            except Exception:
+
+                logger.exception(
+                    "[FemiRouterManager] "
+                    "ERREUR pendant _dispatch_intent "
+                    "pour intent #%s",
+                    index,
+                )
+
+                raise
+
+            logger.info(
+                "[FemiRouterManager] "
+                "Résultat dispatch=%s",
+                result,
+            )
+
+            logger.info(
+                "[FemiRouterManager] "
+                "Type résultat=%s",
+                (
+                    type(result).__name__
+                    if result is not None
+                    else "None"
+                ),
+            )
+
+            logger.info(
+                "[FemiRouterManager] "
+                "dispatch_needs_clarification=%s",
+                dispatch_needs_clarification,
             )
 
             if dispatch_needs_clarification:
@@ -916,7 +1061,30 @@ class FemiRouterManager:
                 AccountingExtractionResult,
             ):
 
-                accounting_results.append(result)
+                logger.info(
+                    "[FemiRouterManager] "
+                    ">>> AccountingExtractionResult détecté"
+                )
+
+                logger.info(
+                    "[FemiRouterManager] "
+                    "Accounting result=%s",
+                    result,
+                )
+
+                logger.info(
+                    "[FemiRouterManager] "
+                    "Accounting needs_clarification=%s",
+                    getattr(
+                        result,
+                        "needs_clarification",
+                        None,
+                    ),
+                )
+
+                accounting_results.append(
+                    result
+                )
 
             elif isinstance(
                 result,
@@ -927,11 +1095,21 @@ class FemiRouterManager:
                 ),
             ):
 
+                logger.info(
+                    "[FemiRouterManager] "
+                    ">>> AccountingModifyResult détecté"
+                )
+
                 accounting_modify_results.append(
                     result
                 )
 
             elif intent.agent == "CUSTOMER":
+
+                logger.info(
+                    "[FemiRouterManager] "
+                    ">>> Customer result détecté"
+                )
 
                 if result is not None:
                     customer_results.append(result)
@@ -944,6 +1122,11 @@ class FemiRouterManager:
                 ),
             ):
 
+                logger.info(
+                    "[FemiRouterManager] "
+                    ">>> Financial Analyst result détecté"
+                )
+
                 financial_analyst_results.append(
                     result
                 )
@@ -954,16 +1137,51 @@ class FemiRouterManager:
 
             if (
                 result is not None
-                and hasattr(result, "missing_fields")
+                and hasattr(
+                    result,
+                    "missing_fields",
+                )
             ):
 
-                for field in result.missing_fields:
+                result_missing_fields = (
+                    getattr(
+                        result,
+                        "missing_fields",
+                        [],
+                    )
+                )
+
+                logger.info(
+                    "[FemiRouterManager] "
+                    "result.missing_fields=%s",
+                    result_missing_fields,
+                )
+
+                for field in result_missing_fields:
 
                     if field not in missing_fields:
                         missing_fields.append(field)
 
+        # ========================================================
+        # FIN DISPATCH
+        # ========================================================
+
+        logger.info("=" * 80)
+
+        logger.info(
+            "[FemiRouterManager] "
+            ">>> accounting_results FINAL=%s",
+            accounting_results,
+        )
+
+        logger.info(
+            "[FemiRouterManager] "
+            ">>> nombre accounting_results=%s",
+            len(accounting_results),
+        )
+
         # --------------------------------------------------------
-        # PERSISTANCE ACCOUNTING
+        # Filtrage des résultats valides
         # --------------------------------------------------------
 
         clean_accounting_results = [
@@ -972,27 +1190,224 @@ class FemiRouterManager:
             if not result.needs_clarification
         ]
 
+        logger.info(
+            "[FemiRouterManager] "
+            ">>> clean_accounting_results=%s",
+            clean_accounting_results,
+        )
+
+        logger.info(
+            "[FemiRouterManager] "
+            ">>> nombre clean_accounting_results=%s",
+            len(clean_accounting_results),
+        )
+
+        # --------------------------------------------------------
+        # Log détaillé de chaque résultat
+        # --------------------------------------------------------
+
+        if accounting_results:
+
+            for index, result in enumerate(
+                accounting_results,
+                start=1,
+            ):
+
+                logger.info(
+                    "[FemiRouterManager] "
+                    "Accounting #%s | "
+                    "needs_clarification=%s | "
+                    "result=%s",
+                    index,
+                    getattr(
+                        result,
+                        "needs_clarification",
+                        None,
+                    ),
+                    result,
+                )
+
+        else:
+
+            logger.warning(
+                "[FemiRouterManager] "
+                "!!! Aucun AccountingExtractionResult "
+                "n'a été produit."
+            )
+
+        # ========================================================
+        # PERSISTANCE ACCOUNTING
+        # ========================================================
+
         operation_ids: list[str] = []
 
         if clean_accounting_results:
 
-            operations = cls._persist_accounting_results(
-                accounting_results=clean_accounting_results,
-                entreprise=entreprise,
-                utilisateur=utilisateur,
-                source=source,
-                raw_text=raw_text,
-                image_bytes=image_bytes,
+            logger.info("=" * 80)
+
+            logger.info(
+                "[FemiRouterManager] "
+                ">>> SAUVEGARDE DES OPERATIONS"
             )
 
-            operation_ids = [
-                str(operation.id)
-                for operation in operations
-            ]
+            logger.info(
+                "[FemiRouterManager] "
+                "Nombre de résultats à sauvegarder=%s",
+                len(clean_accounting_results),
+            )
 
-        # --------------------------------------------------------
+            logger.info(
+                "[FemiRouterManager] "
+                "Utilisateur présent=%s",
+                utilisateur is not None,
+            )
+
+            logger.info(
+                "[FemiRouterManager] "
+                "Utilisateur ID=%s",
+                getattr(
+                    utilisateur,
+                    "id",
+                    None,
+                ),
+            )
+
+            logger.info(
+                "[FemiRouterManager] "
+                "Entreprise ID=%s",
+                getattr(
+                    entreprise,
+                    "id",
+                    None,
+                ),
+            )
+
+            if utilisateur is None:
+
+                logger.error(
+                    "[FemiRouterManager] "
+                    "!!! IMPOSSIBLE DE SAUVEGARDER : "
+                    "utilisateur=None"
+                )
+
+            else:
+
+                try:
+
+                    logger.info(
+                        "[FemiRouterManager] "
+                        ">>> appel de "
+                        "_persist_accounting_results()"
+                    )
+
+                    operations = (
+                        cls._persist_accounting_results(
+                            accounting_results=(
+                                clean_accounting_results
+                            ),
+                            entreprise=entreprise,
+                            utilisateur=utilisateur,
+                            source=source,
+                            raw_text=raw_text,
+                            image_bytes=image_bytes,
+                        )
+                    )
+
+                    logger.info(
+                        "[FemiRouterManager] "
+                        ">>> _persist_accounting_results terminé"
+                    )
+
+                    logger.info(
+                        "[FemiRouterManager] "
+                        "operations retournées=%s",
+                        operations,
+                    )
+
+                    logger.info(
+                        "[FemiRouterManager] "
+                        "nombre operations créées=%s",
+                        len(operations),
+                    )
+
+                    operation_ids = [
+                        str(operation.id)
+                        for operation in operations
+                    ]
+
+                    logger.info(
+                        "[FemiRouterManager] "
+                        ">>> OPERATION IDS=%s",
+                        operation_ids,
+                    )
+
+                except Exception:
+
+                    logger.exception(
+                        "[FemiRouterManager] "
+                        "!!! ERREUR LORS DE LA "
+                        "SAUVEGARDE DES OPERATIONS"
+                    )
+
+                    raise
+
+        else:
+
+            logger.warning("=" * 80)
+
+            logger.warning(
+                "[FemiRouterManager] "
+                "!!! AUCUNE OPERATION À SAUVEGARDER"
+            )
+
+            logger.warning(
+                "[FemiRouterManager] "
+                "accounting_results=%s",
+                accounting_results,
+            )
+
+            logger.warning(
+                "[FemiRouterManager] "
+                "missing_fields=%s",
+                missing_fields,
+            )
+
+            logger.warning(
+                "[FemiRouterManager] "
+                "needs_clarification=%s",
+                needs_clarification,
+            )
+
+        # ========================================================
         # RESULTAT FINAL
-        # --------------------------------------------------------
+        # ========================================================
+
+        logger.info("=" * 80)
+
+        logger.info(
+            "[FemiRouterManager] "
+            ">>> FIN _build_result"
+        )
+
+        logger.info(
+            "[FemiRouterManager] "
+            "operation_ids=%s",
+            operation_ids,
+        )
+
+        logger.info(
+            "[FemiRouterManager] "
+            "needs_clarification=%s",
+            needs_clarification,
+        )
+
+        logger.info(
+            "[FemiRouterManager] "
+            "missing_fields=%s",
+            missing_fields,
+        )
+
+        logger.info("=" * 80)
 
         return RouterProcessResult(
             success=True,
@@ -1026,6 +1441,61 @@ class FemiRouterManager:
         image_bytes,
     ) -> list[Operation]:
 
+        logger.info("=" * 80)
+
+        logger.info(
+            "[FemiRouterManager] "
+            ">>> _persist_accounting_results"
+        )
+
+        logger.info(
+            "[FemiRouterManager] "
+            "utilisateur_id=%s",
+            getattr(
+                utilisateur,
+                "id",
+                None,
+            ),
+        )
+
+        logger.info(
+            "[FemiRouterManager] "
+            "entreprise_id=%s",
+            getattr(
+                entreprise,
+                "id",
+                None,
+            ),
+        )
+
+        logger.info(
+            "[FemiRouterManager] "
+            "source=%s",
+            source,
+        )
+
+        logger.info(
+            "[FemiRouterManager] "
+            "raw_text=%s",
+            raw_text,
+        )
+
+        logger.info(
+            "[FemiRouterManager] "
+            "nombre accounting_results=%s",
+            len(accounting_results),
+        )
+
+        logger.info(
+            "[FemiRouterManager] "
+            "accounting_results=%s",
+            accounting_results,
+        )
+
+        # --------------------------------------------------------
+        # Vérification utilisateur
+        # --------------------------------------------------------
+
         if utilisateur is None:
 
             logger.error(
@@ -1038,9 +1508,35 @@ class FemiRouterManager:
 
         all_operations: list[Operation] = []
 
-        for result in accounting_results:
+        # --------------------------------------------------------
+        # Sauvegarde de chaque résultat comptable
+        # --------------------------------------------------------
+
+        for index, result in enumerate(
+            accounting_results,
+            start=1,
+        ):
+
+            logger.info("-" * 70)
+
+            logger.info(
+                "[FemiRouterManager] "
+                ">>> Sauvegarde accounting #%s",
+                index,
+            )
+
+            logger.info(
+                "[FemiRouterManager] "
+                "result=%s",
+                result,
+            )
 
             try:
+
+                logger.info(
+                    "[FemiRouterManager] "
+                    ">>> appel save_accounting_transactions()"
+                )
 
                 operations = (
                     save_accounting_transactions(
@@ -1052,20 +1548,78 @@ class FemiRouterManager:
                     )
                 )
 
+                logger.info(
+                    "[FemiRouterManager] "
+                    "<<< retour save_accounting_transactions()=%s",
+                    operations,
+                )
+
+                logger.info(
+                    "[FemiRouterManager] "
+                    "type retour=%s",
+                    (
+                        type(operations).__name__
+                        if operations is not None
+                        else "None"
+                    ),
+                )
+
                 if operations:
+
+                    logger.info(
+                        "[FemiRouterManager] "
+                        "Nombre d'operations retournées=%s",
+                        len(operations),
+                    )
+
                     all_operations.extend(
                         operations
+                    )
+
+                else:
+
+                    logger.warning(
+                        "[FemiRouterManager] "
+                        "!!! save_accounting_transactions "
+                        "n'a retourné aucune opération."
                     )
 
             except Exception:
 
                 logger.exception(
                     "[FemiRouterManager] "
-                    "Erreur lors de la sauvegarde "
+                    "!!! Erreur lors de la sauvegarde "
                     "des transactions ACCOUNTING."
                 )
 
                 raise
+
+        # --------------------------------------------------------
+        # Résultat de la sauvegarde
+        # --------------------------------------------------------
+
+        logger.info("=" * 80)
+
+        logger.info(
+            "[FemiRouterManager] "
+            ">>> OPERATIONS CRÉÉES=%s",
+            all_operations,
+        )
+
+        logger.info(
+            "[FemiRouterManager] "
+            ">>> NOMBRE OPERATIONS=%s",
+            len(all_operations),
+        )
+
+        logger.info(
+            "[FemiRouterManager] "
+            ">>> IDS OPERATIONS=%s",
+            [
+                str(operation.id)
+                for operation in all_operations
+            ],
+        )
 
         # --------------------------------------------------------
         # Pièce justificative
@@ -1073,12 +1627,26 @@ class FemiRouterManager:
 
         if image_bytes:
 
+            logger.info(
+                "[FemiRouterManager] "
+                "Image présente : ajout des pièces justificatives."
+            )
+
             for operation in all_operations:
 
                 cls._attach_piece_justificative_bytes(
                     operation,
                     image_bytes,
                 )
+
+        else:
+
+            logger.info(
+                "[FemiRouterManager] "
+                "Aucune image à attacher."
+            )
+
+        logger.info("=" * 80)
 
         return all_operations
 
@@ -1154,7 +1722,9 @@ class FemiRouterManager:
                 AccountingExtractionResult,
             ):
 
-                accounting_results.append(result)
+                accounting_results.append(
+                    result
+                )
 
             elif isinstance(
                 result,
@@ -1192,7 +1762,10 @@ class FemiRouterManager:
 
             if (
                 result is not None
-                and hasattr(result, "missing_fields")
+                and hasattr(
+                    result,
+                    "missing_fields",
+                )
             ):
 
                 for field in result.missing_fields:
