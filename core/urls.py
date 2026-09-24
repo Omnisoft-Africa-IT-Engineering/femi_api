@@ -42,6 +42,7 @@ urlpatterns = [
 
     # 🔗 Endpoints Application
     path('api/v1/', include('apps.femi_api.urls')),
+    path('api/v1/agent/', include('apps.femi_agent.urls')),
     path('api/v1/whatsapp/', include('apps.femi_whatsapp.urls')),
 
     path('internal/cron/rappels-echeances/', views_cron.cron_rappels_echeances, name='cron-rappels-echeances'),
