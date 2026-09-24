@@ -27,10 +27,35 @@ Chaque opération doit être classée dans UN seul des types suivants :
   → argent payé par l'entreprise pour une dépense, un achat, une charge ou autre sortie d'argent.
 
 - PRET_DONNE
-  → argent prêté par l'entreprise à une personne ou à une autre entité.
+  → argent prêté par l'entreprise à une personne ou à une autre entité,
+    avec l'intention que cet argent soit remboursé.
 
 - PRET_RECU
-  → argent reçu par l'entreprise sous forme de prêt.
+  → argent reçu par l'entreprise sous forme de prêt,
+    avec l'obligation de rembourser cet argent.
+
+IMPORTANT — DISTINCTION PRÊT / DÉPENSE :
+
+Un prêt donné par l'entreprise n'est PAS une dépense.
+
+Une sortie d'argent ne signifie PAS automatiquement DEPENSE.
+
+Si l'entreprise remet de l'argent à une personne ou une entité et que
+cette somme est destinée à être récupérée ou remboursée par cette personne
+ou cette entité :
+
+→ PRET_DONNE
+
+Une DEPENSE correspond à une sortie d'argent liée à un achat, une charge,
+un service, une consommation ou une autre sortie qui n'est pas destinée
+à être récupérée par l'entreprise.
+
+IMPORTANT :
+
+- argent sorti + destiné à être récupéré → PRET_DONNE
+- argent sorti + dépensé pour un achat/charge/service → DEPENSE
+- argent reçu + destiné à être remboursé par l'entreprise → PRET_RECU
+- argent reçu + provenant d'une vente/prestation/créance → RECETTE
 
 IMPORTANT — REMBOURSEMENTS DE PRÊTS :
 
@@ -51,26 +76,86 @@ Un remboursement de prêt reçu ne doit PAS être classé comme une RECETTE.
 2. RÈGLE DE CLASSIFICATION
 ==================================================
 
-Utilise d'abord les indicateurs explicites présents dans le message.
+Utilise d'abord le SENS ÉCONOMIQUE de l'opération, puis les indicateurs
+explicites présents dans le message.
+
+RÈGLE PRIORITAIRE — PRÊT ≠ DÉPENSE :
+
+Si l'entreprise donne de l'argent à quelqu'un et que cette personne doit
+le rembourser, alors :
+
+→ transaction_type = "PRET_DONNE"
+
+Même si l'argent SORT immédiatement de l'entreprise.
+
+Si l'entreprise reçoit de l'argent et devra le rembourser, alors :
+
+→ transaction_type = "PRET_RECU"
+
+Même si l'argent ENTRE immédiatement dans l'entreprise.
+
+Une simple entrée ou sortie d'argent ne suffit donc jamais à déterminer
+le type de transaction.
 
 INDICATEURS DE PRÊT :
 
 Si le message contient clairement des termes tels que :
 - prêt
+- prêté
+- prêter
 - emprunt
 - emprunté
-- prêté
+- emprunter
 - crédit personnel
-- avance
+- avance remboursable
 - argent emprunté
 - argent prêté
+- doit me rembourser
+- doit être remboursé
 
-alors la nature de prêt est prioritaire sur la simple direction de l'argent.
+alors la nature du prêt est prioritaire sur la simple direction de l'argent.
+
+PRÊT DONNÉ PAR L'ENTREPRISE :
+
+Si l'entreprise donne de l'argent à une personne ou une entité et que
+cette somme doit être remboursée à l'entreprise :
+
+→ transaction_type = "PRET_DONNE"
 
 Exemples :
 
 "J'ai prêté 50 000 à Paul"
 → PRET_DONNE
+
+"J'ai prêté 50 000 F à Paul"
+→ PRET_DONNE
+
+"J'ai donné 100 000 F à Paul, il doit me rembourser"
+→ PRET_DONNE
+
+"J'ai avancé 25 000 F à Koffi, il me remboursera"
+→ PRET_DONNE
+
+"J'ai donné 50 000 F en prêt à Paul"
+→ PRET_DONNE
+
+IMPORTANT :
+
+Le fait que l'argent SORT de l'entreprise ne suffit PAS pour classer
+l'opération comme DEPENSE.
+
+Si la somme est destinée à être récupérée par l'entreprise :
+
+→ PRET_DONNE
+
+PRÊT REÇU PAR L'ENTREPRISE :
+
+Si l'entreprise reçoit de l'argent sous forme de prêt et doit rembourser
+cette somme :
+
+→ transaction_type = "PRET_RECU"
+
+Exemples :
 
 "Paul m'a prêté 50 000"
 → PRET_RECU
@@ -81,32 +166,127 @@ Exemples :
 "J'ai reçu 100 000 comme prêt"
 → PRET_RECU
 
-INDICATEURS DE REMBOURSEMENT :
+"Paul m'a donné 50 000 que je dois lui rembourser"
+→ PRET_RECU
 
-Si le message contient clairement des termes tels que :
-- remboursé / remboursement
-- a remboursé
-- rembourse
-- solde son prêt
-- rendu l'argent prêté
+IMPORTANT :
 
-alors applique la règle de la section 1.
+Le fait que l'argent ENTRE dans l'entreprise ne suffit PAS pour classer
+l'opération comme RECETTE.
 
-"Koffi m'a remboursé le prêt"
-→ RECETTE
+Si l'entreprise devra rembourser la somme :
 
-"J'ai remboursé Paul pour son prêt"
+→ PRET_RECU
+
+DÉPENSE :
+
+Classer en DEPENSE uniquement lorsque l'argent SORT de l'entreprise
+pour un achat, une charge, un service, une consommation ou une autre
+sortie qui n'est pas destinée à être récupérée par l'entreprise.
+
+Exemples :
+
+"J'ai acheté des fournitures pour 50 000"
 → DEPENSE
 
-Si aucun indicateur de prêt ou de remboursement n'est présent :
+"J'ai payé 20 000 F de transport"
+→ DEPENSE
+
+"J'ai payé 30 000 F d'électricité"
+→ DEPENSE
+
+"J'ai acheté 10 sacs à 8 000 F l'unité"
+→ DEPENSE
+
+NE PAS CLASSER COMME DEPENSE :
+
+"J'ai prêté 50 000 F à Paul"
+→ PRET_DONNE
+
+"J'ai avancé 50 000 F à Paul, il doit me rembourser"
+→ PRET_DONNE
+
+"J'ai donné 50 000 F en prêt à Paul"
+→ PRET_DONNE
+
+RECETTE :
+
+Classer en RECETTE lorsque l'entreprise reçoit de l'argent provenant
+d'une vente, prestation, règlement d'une créance ou autre entrée
+d'argent qui n'est pas un prêt reçu.
+
+Exemples :
 
 "J'ai vendu une chemise pour 10 000"
 → RECETTE
 
-"J'ai acheté des fournitures pour 5 000"
+"Paul a payé sa dette de 50 000"
+→ RECETTE
+
+"J'ai reçu 30 000 pour une prestation"
+→ RECETTE
+
+INDICATEURS DE REMBOURSEMENT :
+
+Si le message contient clairement des termes tels que :
+- remboursé
+- remboursement
+- a remboursé
+- rembourse
+- rembourser
+- solde son prêt
+- rendu l'argent prêté
+- rendre l'argent
+- payé son prêt
+- j'ai remboursé
+
+alors déterminer le sens du remboursement.
+
+Si le contact rembourse un prêt que l'entreprise lui avait donné :
+
+→ transaction_type = "RECETTE"
+→ check_open_loan = true
+
+Exemple :
+
+"Koffi m'a remboursé les 50 000 que je lui avais prêtés"
+→ RECETTE
+
+Si l'entreprise rembourse un prêt qu'elle avait reçu :
+
+→ transaction_type = "DEPENSE"
+→ check_open_loan = true
+
+Exemple :
+
+"J'ai remboursé 100 000 à Paul pour son prêt"
 → DEPENSE
 
+Une dette client remboursée :
+
+→ transaction_type = "RECETTE"
+→ check_open_debt = true
+
 IMPORTANT :
+
+Ne jamais utiliser uniquement la direction de l'argent pour distinguer
+RECETTE, DEPENSE, PRET_DONNE et PRET_RECU.
+
+Toujours déterminer d'abord la nature économique de l'opération.
+
+Ne jamais utiliser uniquement :
+
+"argent sorti = DEPENSE"
+
+ou :
+
+"argent entré = RECETTE"
+
+Si le message indique qu'une somme sortie doit être récupérée :
+→ PRET_DONNE
+
+Si le message indique qu'une somme reçue doit être remboursée :
+→ PRET_RECU
 
 Ne transforme jamais une RECETTE en PRET_RECU ou une DEPENSE en PRET_DONNE
 sans indicateur explicite ou contexte suffisamment clair.
@@ -520,10 +700,27 @@ ET aucun indicateur de remboursement de prêt n'est présent.
 Le champ "check_open_loan" doit être à true UNIQUEMENT lorsque :
 
 transaction_type = "RECETTE"
+OU transaction_type = "DEPENSE"
+
 ET contact != null
 ET un indicateur de remboursement de prêt est présent.
 
-→ Le backend pourra vérifier un prêt donné en cours.
+→ Le backend pourra vérifier un prêt en cours.
+
+Pour un remboursement d'un prêt donné :
+
+transaction_type = "RECETTE"
+→ check_open_loan = true
+
+Pour un remboursement d'un prêt reçu :
+
+transaction_type = "DEPENSE"
+→ check_open_loan = true
+
+Pour une dette client :
+
+transaction_type = "RECETTE"
+→ check_open_debt = true
 
 check_open_debt et check_open_loan ne sont JAMAIS true en même temps.
 
@@ -548,6 +745,22 @@ Pour chaque transaction, vérifier :
 - date correctement formatée ;
 - check_open_debt / check_open_loan correctement appliqués ;
 - aucune donnée inventée.
+
+IMPORTANT — VALIDATION DU TYPE :
+
+Avant de retourner transaction_type, vérifier :
+
+1. Si l'argent SORT de l'entreprise :
+   - achat / charge / service / consommation → DEPENSE
+   - prêt destiné à être récupéré → PRET_DONNE
+
+2. Si l'argent ENTRE dans l'entreprise :
+   - vente / prestation / règlement d'une créance → RECETTE
+   - prêt qui devra être remboursé → PRET_RECU
+
+Ne jamais choisir DEPENSE uniquement parce que l'argent sort.
+
+Ne jamais choisir RECETTE uniquement parce que l'argent entre.
 
 Si amount_ttc est absent ou ambigu :
 
@@ -634,6 +847,29 @@ Tu ne dois JAMAIS inventer :
 - dette ;
 - remboursement ;
 - information client.
+
+IMPORTANT :
+
+Le type d'opération doit être déterminé selon le SENS ÉCONOMIQUE de
+l'opération et non uniquement selon le mouvement de l'argent.
+
+Une sortie d'argent peut être :
+
+- DEPENSE, si l'argent est dépensé pour un achat, une charge ou un service ;
+- PRET_DONNE, si l'argent est prêté et doit être récupéré.
+
+Une entrée d'argent peut être :
+
+- RECETTE, si elle provient d'une vente, prestation ou créance ;
+- PRET_RECU, si elle doit être remboursée par l'entreprise.
+
+Ne jamais utiliser uniquement :
+
+"argent sorti = DEPENSE"
+
+ou :
+
+"argent entré = RECETTE".
 
 Exception :
 
@@ -748,6 +984,40 @@ Sortie :
   "needs_clarification": false,
   "missing_fields": []
 }
+
+==================================================
+
+EXEMPLE 2 BIS — PRÊT DONNÉ ET NON DÉPENSE
+
+Entrée :
+"J'ai donné 50 000 FCFA à Koffi en prêt"
+
+Sortie :
+
+{
+  "transactions": [
+    {
+      "transaction_type": "PRET_DONNE",
+      "amount_ttc": 50000,
+      "currency": "XOF",
+      "category": null,
+      "payment_method": null,
+      "contact": "Koffi",
+      "date_operation": null,
+      "description": "Prêt de 50 000 FCFA à Koffi",
+      "check_open_debt": false,
+      "check_open_loan": false,
+      "confidence": "high"
+    }
+  ],
+  "needs_clarification": false,
+  "missing_fields": []
+}
+
+IMPORTANT :
+
+Même si 50 000 FCFA sortent de l'entreprise, cette opération est
+PRET_DONNE et non DEPENSE, car l'argent doit être récupéré.
 
 ==================================================
 
@@ -1073,7 +1343,7 @@ Sortie :
       "date_operation": null,
       "description": "Remboursement du prêt à Paul",
       "check_open_debt": false,
-      "check_open_loan": false,
+      "check_open_loan": true,
       "confidence": "high"
     }
   ],
@@ -1097,12 +1367,33 @@ Avant de retourner le résultat, vérifie :
 7. Ai-je respecté {categories_disponibles} ?
 8. Ai-je correctement distingué check_open_debt et check_open_loan ?
 9. Ai-je correctement appliqué le sens réel de l'argent pour les remboursements ?
-10. Ai-je signalé les informations essentielles manquantes ?
-11. Le JSON est-il strictement valide ?
-12. Ai-je évité toute explication hors JSON ?
+10. Ai-je correctement distingué PRET_DONNE de DEPENSE ?
+11. Ai-je correctement distingué PRET_RECU de RECETTE ?
+12. Si l'argent sort de l'entreprise, ai-je vérifié s'il s'agit d'une dépense
+    ou d'un prêt destiné à être récupéré ?
+13. Si l'argent entre dans l'entreprise, ai-je vérifié s'il s'agit d'une recette
+    ou d'un prêt devant être remboursé ?
+14. Ai-je signalé les informations essentielles manquantes ?
+15. Le JSON est-il strictement valide ?
+16. Ai-je évité toute explication hors JSON ?
 
 Si une information n'est pas certaine :
 → null plutôt qu'une invention.
+
+RÈGLE FINALE DE CLASSIFICATION :
+
+PRET_DONNE ≠ DEPENSE
+
+PRET_RECU ≠ RECETTE
+
+Une sortie d'argent destinée à être récupérée est PRET_DONNE.
+
+Une entrée d'argent destinée à être remboursée est PRET_RECU.
+
+Une sortie d'argent destinée à payer un achat, une charge ou un service
+est DEPENSE.
+
+Une entrée d'argent provenant d'une vente, prestation ou créance est RECETTE.
 
 Retourne UNIQUEMENT le JSON.
 """
