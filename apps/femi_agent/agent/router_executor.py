@@ -70,7 +70,7 @@ class RouterExecutor:
        # Le prompt système du Router (~9500 tokens) dépasse largement le
     # contexte par défaut d'Ollama (2048) — d'où num_ctx explicite ici,
     # sans toucher au défaut partagé par l'ancien pipeline (voir llm.py).
-    ROUTER_NUM_CTX = 16384
+    ROUTER_NUM_CTX = 8192
 
     @classmethod
     def _get_structured_llm(cls):

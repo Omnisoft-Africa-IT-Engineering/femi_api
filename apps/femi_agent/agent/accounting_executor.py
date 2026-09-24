@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # largement le contexte par défaut d'Ollama (2048) — même précaution que pour
 # ROUTER_PROMPT (voir router_executor.py), sans toucher au défaut partagé par
 # l'ancien pipeline (voir llm.py).
-ACCOUNTING_NUM_CTX = 16384
+ACCOUNTING_NUM_CTX = 8192
 
 # Point 6 : injection dynamique des catégories du tenant via
 # get_categories_disponibles(entreprise), avec repli statique si le tenant
