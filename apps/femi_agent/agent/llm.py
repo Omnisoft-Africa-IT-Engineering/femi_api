@@ -23,7 +23,7 @@ DEFAULT_BASE_URL = "http://localhost:11434"
 DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
 DEFAULT_MISTRAL_MODEL = "mistral-small-latest"
 DEFAULT_CLOUDFLARE_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite"
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
 
 
 @lru_cache(maxsize=8)
