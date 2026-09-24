@@ -114,6 +114,13 @@ class AccountingTransactionLLMSchema(BaseModel):
         if value is None or value == "":
             return None
         return value
+    # NOUVEAU
+    statut_paiement: Literal["PAYE", "CREDIT"] = "PAYE"
+
+    check_open_debt: bool = False
+    check_open_loan: bool = False
+
+    confidence: AccountingConfidenceEnum = AccountingConfidenceEnum.MEDIUM
 
 
 class AccountingExtractionLLMResult(BaseModel):
@@ -175,6 +182,8 @@ class AccountingTransactionSchema(BaseModel):
     def from_llm_schema(cls, llm_schema: AccountingTransactionLLMSchema) -> "AccountingTransactionSchema":
         """Convertit une sortie LLM (float) en schéma interne (Decimal)."""
         return cls(**llm_schema.model_dump())
+
+    statut_paiement: Literal["PAYE", "CREDIT"] = "PAYE"
 
 
 class AccountingExtractionResult(BaseModel):

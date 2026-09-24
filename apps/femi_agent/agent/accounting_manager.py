@@ -170,17 +170,19 @@ def _save_single_transaction(entreprise, utilisateur, txn: AccountingTransaction
             return operation_imputee
 
     operation = Operation.objects.create(
-        entreprise=entreprise,
-        transaction_type=txn.transaction_type,
-        amount_ttc=txn.amount_ttc,
-        currency=txn.currency or "XOF",
-        category=txn.category,
-        payment_method=txn.payment_method.value if txn.payment_method else None,
-        transaction_date=txn.date_operation or timezone_today(),
-        description=txn.description,
-        contact=contact,
-        source=source,
-    )
+    entreprise=entreprise,
+    transaction_type=txn.transaction_type,
+    amount_ttc=txn.amount_ttc,
+    currency=txn.currency or "XOF",
+    category=txn.category,
+    payment_method=txn.payment_method.value if txn.payment_method else None,
+    transaction_date=txn.date_operation or timezone_today(),
+    description=txn.description,
+    contact=contact,
+    source=source,
+    statut_paiement=txn.statut_paiement,
+    montant_paye=0 if txn.statut_paiement == "CREDIT" else txn.amount_ttc,
+)
     logger.info(
         "[AccountingManager] Operation créée : id=%s type=%s montant=%s contact=%s",
         operation.id, operation.transaction_type, operation.amount_ttc,
