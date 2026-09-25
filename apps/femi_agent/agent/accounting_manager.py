@@ -32,6 +32,7 @@ from django.db import transaction
 from apps.femi_account.models import Contact, Operation
 from apps.femi_agent.schemas import AccountingExtractionResult, AccountingTransactionSchema
 from apps.femi_agent.agent.tools import get_contact_open_debts, get_contact_open_loans
+from apps.femi_account.fiscal import creer_ou_mettre_a_jour_echeance_tva
 
 logger = logging.getLogger(__name__)
 
@@ -156,11 +157,8 @@ def _save_single_transaction(entreprise, utilisateur, txn: AccountingTransaction
     indépendante — voir _impute_to_open_operation().
 
     Si check_open_debt/check_open_loan est True mais qu'AUCUNE opération
-    ouverte n'existe (ex: le LLM a interprété à tort un message comme un
-    remboursement), on retombe sur le comportement par défaut : créer une
-    RECETTE standalone. Cas volontairement non bloquant (pas de
-    needs_clarification ici) — voir note en tête de fichier pour la
-    justification et les limites de ce choix.
+    ouverte n'existe, on retombe sur le comportement par défaut : créer une
+    opération standalone.
     """
     contact = _resolve_contact(entreprise, txn.contact)
 
@@ -170,26 +168,34 @@ def _save_single_transaction(entreprise, utilisateur, txn: AccountingTransaction
             return operation_imputee
 
     operation = Operation.objects.create(
-    entreprise=entreprise,
-    transaction_type=txn.transaction_type,
-    amount_ttc=txn.amount_ttc,
-    currency=txn.currency or "XOF",
-    category=txn.category,
-    payment_method=txn.payment_method.value if txn.payment_method else None,
-    transaction_date=txn.date_operation or timezone_today(),
-    description=txn.description,
-    contact=contact,
-    source=source,
-    statut_paiement=txn.statut_paiement,
-    montant_paye=0 if txn.statut_paiement == "CREDIT" else txn.amount_ttc,
-)
+        entreprise=entreprise,
+        transaction_type=txn.transaction_type,
+        amount_ttc=txn.amount_ttc,
+        amount_ht=getattr(txn, "amount_ht", None),
+        tax_amount=getattr(txn, "tax_amount", None),
+        currency=txn.currency or "XOF",
+        category=txn.category,
+        payment_method=txn.payment_method.value if txn.payment_method else None,
+        transaction_date=txn.date_operation or timezone_today(),
+        description=txn.description,
+        contact=contact,
+        source=source,
+        statut_paiement=txn.statut_paiement,
+        montant_paye=0 if txn.statut_paiement == "CREDIT" else txn.amount_ttc,
+    )
+
+    if getattr(operation, "tax_amount", None) is not None and operation.tax_amount > 0:
+        creer_ou_mettre_a_jour_echeance_tva(operation)
+
     logger.info(
         "[AccountingManager] Operation créée : id=%s type=%s montant=%s contact=%s",
-        operation.id, operation.transaction_type, operation.amount_ttc,
+        operation.id,
+        operation.transaction_type,
+        operation.amount_ttc,
         contact.nom if contact else None,
     )
     return operation
-
+    
 
 def save_accounting_transactions(entreprise, utilisateur, result: AccountingExtractionResult, source, raw_text) -> list[Operation]:
     """
