@@ -33,6 +33,20 @@ logger = logging.getLogger(__name__)
 
 LOG_TEXT_PREVIEW_LEN = 80
 
+
+def _resolve_vision_provider() -> str:
+    """Provider utilisé pour les appels vision (images non vides).
+
+    Isolé de settings.FEMI_LLM_PROVIDER via un réglage dédié
+    (FEMI_VISION_PROVIDER), pour pouvoir changer le moteur de l'OCR
+    (ex. passer sur Gemini) sans toucher au provider des agents texte
+    (Router, Comptabilité, Analyste financier...). Si non défini,
+    retombe sur FEMI_LLM_PROVIDER (comportement historique inchangé).
+    """
+    return getattr(
+        settings, "FEMI_VISION_PROVIDER", None
+    ) or getattr(settings, "FEMI_LLM_PROVIDER", "ollama")
+
 _FALLBACK_FORMAT_SUFFIX = (
     "\n\n### FORMAT DE SORTIE (STRICT)\n"
     "Réponds uniquement avec un JSON valide, sans texte autour :\n"
@@ -192,12 +206,18 @@ class StructuredLLMExecutor:
                 propre repli (settings.FEMI_LLM_MODEL).
         """
 
-        if images and getattr(settings, "FEMI_LLM_PROVIDER", "ollama").lower() == "cloudflare":
+        vision_provider = _resolve_vision_provider().lower() if images else None
+
+        if images and vision_provider == "cloudflare":
             return StructuredLLMExecutor._execute_cloudflare_native_vision(
                 prompt_text, message_text, output_schema, images, error_cls, log_prefix, model_name
             )
         try:
-            llm = get_llm(model_name=model_name, num_ctx=num_ctx)
+            llm = get_llm(
+                model_name=model_name,
+                num_ctx=num_ctx,
+                provider=vision_provider if images else None,
+            )
             structured_llm = llm.with_structured_output(output_schema, **StructuredLLMExecutor._structured_output_kwargs(llm))
             logger.debug(
                 "[%s] Appel pour : '%s%s'",
@@ -235,8 +255,13 @@ class StructuredLLMExecutor:
         model_name: str | None = None,
     ) -> BaseModel:
         """Exécution asynchrone générique (mêmes arguments que execute())."""
+        vision_provider = _resolve_vision_provider().lower() if images else None
         try:
-            llm = get_llm(model_name=model_name, num_ctx=num_ctx)
+            llm = get_llm(
+                model_name=model_name,
+                num_ctx=num_ctx,
+                provider=vision_provider if images else None,
+            )
             structured_llm = llm.with_structured_output(output_schema, **StructuredLLMExecutor._structured_output_kwargs(llm))
             logger.debug(
                 "[%s] Appel async pour : '%s%s'",
@@ -274,8 +299,13 @@ class StructuredLLMExecutor:
         model_name: str | None = None,
     ) -> BaseModel:
         """Secours : parsing JSON manuel si with_structured_output() échoue."""
+        vision_provider = _resolve_vision_provider().lower() if images else None
         try:
-            llm = get_llm(model_name=model_name, num_ctx=num_ctx)
+            llm = get_llm(
+                model_name=model_name,
+                num_ctx=num_ctx,
+                provider=vision_provider if images else None,
+            )
             parser = PydanticOutputParser(pydantic_object=output_schema)
             full_prompt = prompt_text + _FALLBACK_FORMAT_SUFFIX.format(
                 format_instructions=parser.get_format_instructions()

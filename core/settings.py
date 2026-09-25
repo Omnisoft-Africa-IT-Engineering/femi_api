@@ -256,6 +256,38 @@ FEMI_VISION_MODEL = config(
     default="llava:latest"
 )
 
+# Provider dédié à la vision (OCR), indépendant de FEMI_LLM_PROVIDER.
+# Laisser vide (défaut) : la vision suit FEMI_LLM_PROVIDER comme avant.
+# Mettre "gemini" pour basculer uniquement l'OCR sur Gemini (nécessite
+# GEMINI_API_KEY) sans changer le provider des agents texte. Dans ce
+# cas, définir aussi FEMI_VISION_MODEL sur un modèle Gemini valide
+# (ex. "gemini-2.5-flash").
+FEMI_VISION_PROVIDER = config(
+    "FEMI_VISION_PROVIDER",
+    default=None
+)
+
+GEMINI_API_KEY = config(
+    "GEMINI_API_KEY",
+    default=None
+)
+
+# Moteur de transcription audio (STT). "whisper" (défaut, comportement
+# actuel, local) ou "parakeet" (NVIDIA Parakeet TDT 0.6B v3, local
+# aussi, via ONNX Runtime — CPU, multilingue dont le français).
+# Indépendant de FEMI_LLM_PROVIDER / FEMI_VISION_PROVIDER : ne concerne
+# que la transcription brute, avant STT_PROMPT (stt_executor.py,
+# inchangé quel que soit le moteur choisi ici).
+FEMI_STT_ENGINE = config(
+    "FEMI_STT_ENGINE",
+    default="whisper"
+)
+
+FEMI_PARAKEET_MODEL = config(
+    "FEMI_PARAKEET_MODEL",
+    default="nemo-parakeet-tdt-0.6b-v3"
+)
+
 OLLAMA_BASE_URL = config(
     "OLLAMA_BASE_URL",
     default="http://localhost:11434"
