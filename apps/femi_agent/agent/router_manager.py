@@ -1037,6 +1037,16 @@ class FemiRouterManager:
         #    nécessaire, soit la demande n'a pas pu être rattachée à un agent
         #    connu (question hors-sujet, intent SETTINGS/UNKNOWN...).
         if needs_clarification:
+            if "fonctionnalite_non_disponible" in missing_fields:
+                return (
+                    "Cette fonctionnalité n'est pas encore disponible chez Femi 🙂\n\n"
+                    "Je peux en revanche t'aider avec :\n"
+                    "• Ton chiffre d'affaires, tes dépenses (avec détail par catégorie), "
+                    "ton bénéfice, ta marge ou ta trésorerie ;\n"
+                    "• Une comparaison entre deux périodes ;\n"
+                    "• Tes créances clients et qui relancer ;\n"
+                    "• Enregistrer, modifier ou supprimer une transaction."
+                )
             if missing_fields:
                 champs = ", ".join(missing_fields)
                 return (
