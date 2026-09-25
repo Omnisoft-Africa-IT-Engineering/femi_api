@@ -12,10 +12,18 @@ from celery.schedules import crontab
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-k*^^n_ssjekw7jiako25_k6+)4(h_-x(jkt$h(03qhkocg9b^f"
+# Lu depuis la variable d'environnement SECRET_KEY (définie sur Render via
+# generateValue: true dans render.yaml). Le défaut ci-dessous n'est utilisé
+# qu'en développement local et ne doit JAMAIS servir en production.
+SECRET_KEY = config(
+    "SECRET_KEY",
+    default="django-insecure-dev-only-do-not-use-in-production",
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# Défaut à False par sécurité : DEBUG doit être explicitement activé
+# (DEBUG=True dans un .env local, jamais sur Render).
+DEBUG = config("DEBUG", default=False, cast=bool)
 
 ALLOWED_HOSTS = ["*"]
 
@@ -116,19 +124,25 @@ WSGI_APPLICATION = "core.wsgi.application"
 # ============================================================
 # Database (Supabase)
 # ============================================================
+#
+# Lue depuis la variable d'environnement DATABASE_URL (obligatoire —
+# aucune valeur par défaut ici : plus aucun identifiant de base en dur
+# dans le code). Format attendu :
+#   postgresql://USER:PASSWORD@HOST:PORT/NAME
+#
+# Sur Render : définie manuellement dans l'onglet Environment (déclarée
+# en sync: false dans render.yaml).
+# En local : à mettre dans un fichier .env à la racine (jamais commité,
+# voir .gitignore) sous la forme DATABASE_URL=postgresql://...
+
+import dj_database_url
 
 DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": "postgres",
-        "USER": "postgres.ammhukotgebwmpibpycm",
-        "PASSWORD": "(Femi-db)2026",
-        "HOST": "aws-1-eu-west-1.pooler.supabase.com",
-        "PORT": "6543",
-        "OPTIONS": {
-            "sslmode": "require",
-        },
-    }
+    "default": dj_database_url.config(
+        default=config("DATABASE_URL"),
+        conn_max_age=600,
+        ssl_require=True,
+    )
 }
 
 
