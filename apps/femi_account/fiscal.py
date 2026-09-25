@@ -9,13 +9,13 @@ from .models import EcheanceFiscale, Operation
 
 def creer_ou_mettre_a_jour_echeance_tva(operation: Operation):
     """
-    Crée ou met à jour l'échéance TVA correspondant à la période
-    fiscale de l'opération.
+    Crée ou récupère l'échéance TVA correspondant au mois
+    de l'opération et rattache l'opération à cette échéance.
 
-    Plusieurs opérations du même mois alimentent la même échéance.
+    Les montants fiscaux ne sont pas nécessaires pour cette étape.
     """
 
-    if not operation.tax_amount or operation.tax_amount <= 0:
+    if not operation.transaction_date:
         return None
 
     periode = operation.transaction_date.strftime("%Y-%m")
@@ -33,7 +33,6 @@ def creer_ou_mettre_a_jour_echeance_tva(operation: Operation):
         )
 
         if echeance is None:
-            # Date provisoire : à remplacer par la règle OTR validée.
             annee = operation.transaction_date.year
             mois = operation.transaction_date.month
 
@@ -42,7 +41,7 @@ def creer_ou_mettre_a_jour_echeance_tva(operation: Operation):
             else:
                 mois_suivant = date(annee, mois + 1, 1)
 
-            # Exemple : échéance fixée au 15 du mois suivant.
+            # Date provisoire à valider avec les règles OTR.
             date_echeance = date(
                 mois_suivant.year,
                 mois_suivant.month,
@@ -55,14 +54,11 @@ def creer_ou_mettre_a_jour_echeance_tva(operation: Operation):
                 libelle=f"Déclaration TVA - {periode}",
                 date_echeance=date_echeance,
                 periode=periode,
-                montant_taxe=Decimal("0.00"),
+                montant_taxe=0,
                 statut="EN_ATTENTE",
             )
 
-        # Évite de compter deux fois la même opération.
-        if not echeance.operations.filter(pk=operation.pk).exists():
-            echeance.montant_taxe += operation.tax_amount
-            echeance.operations.add(operation)
-            echeance.save(update_fields=["montant_taxe"])
+        # Rattacher l'opération à l'échéance
+        echeance.operations.add(operation)
 
         return echeance

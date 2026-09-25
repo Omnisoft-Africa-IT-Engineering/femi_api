@@ -279,7 +279,7 @@ class EcheanceFiscaleViewSet(viewsets.ModelViewSet):
         user = self.request.user
         if not getattr(user, "entreprise", None):
             return EcheanceFiscale.objects.none()
-        return EcheanceFiscale.objects.filter(entreprise=user.entreprise).order_by("date_echeance")
+        return EcheanceFiscale.objects.filter(entreprise=user.entreprise).prefetch_related("operations").order_by("date_echeance")
 
     @action(detail=True, methods=["patch"])
     def marquer_paye(self, request, pk=None):
