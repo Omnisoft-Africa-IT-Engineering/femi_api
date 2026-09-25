@@ -80,41 +80,52 @@ AccountingConfidenceEnum = ConfidenceEnum
 
 class AccountingTransactionLLMSchema(BaseModel):
     """
-    Une transaction telle que produite DIRECTEMENT par le LLM (ACCOUNTING_PROMPT).
+    Une transaction telle que produite DIRECTEMENT par le LLM
+    (ACCOUNTING_PROMPT).
 
-    amount_ttc est en float ici (pas Decimal) car le JSON Schema généré par
-    Pydantic pour Decimal (anyOf avec un pattern regex complexe) fait échouer
-    la conversion en grammaire GBNF côté Ollama. Ne pas utiliser ce schéma
-    ailleurs que pour l'appel LLM — utiliser AccountingTransactionSchema
-    (Decimal) partout ailleurs dans le code.
+    Les montants sont en float ici car ce schéma est utilisé directement
+    par with_structured_output() / Ollama.
+
+    Ne pas utiliser ce schéma pour la persistance en base :
+    utiliser AccountingTransactionSchema.
     """
 
-    model_config = ConfigDict(extra="ignore")  # tolère les champs superflus hallucinés par le LLM
+    model_config = ConfigDict(extra="ignore")
 
-    transaction_type: Literal["RECETTE", "DEPENSE", "PRET_DONNE", "PRET_RECU"]
+    transaction_type: Literal[
+        "RECETTE",
+        "DEPENSE",
+        "PRET_DONNE",
+        "PRET_RECU",
+    ]
+
     amount_ttc: Optional[float] = Field(default=None, ge=0)
+    amount_ht: Optional[float] = Field(default=None, ge=0)
+    tax_amount: Optional[float] = Field(default=None, ge=0)
+
     currency: Optional[str] = Field(default=None, max_length=5)
     category: Optional[str] = None
     payment_method: Optional[AccountingPaymentMethodEnum] = None
     contact: Optional[str] = None
     date_operation: Optional[date] = None
     description: str = ""
+
+    statut_paiement: Literal["PAYE", "CREDIT"] = "PAYE"
+
     check_open_debt: bool = False
     check_open_loan: bool = False
+
     confidence: AccountingConfidenceEnum = AccountingConfidenceEnum.MEDIUM
 
     @field_validator("date_operation", mode="before")
     @classmethod
     def parse_date_operation(cls, value: Any) -> Optional[date]:
-        """Le prompt garantit YYYY-MM-DD ou null — pas de fallback silencieux ici
-        (contrairement à BaseOperationSchema.parse_flexible_date) : si la date
-        est fournie mais invalide, on préfère lever une erreur de validation
-        plutôt que de deviner, car needs_clarification aurait dû gérer ce cas
-        en amont côté prompt."""
+        """Le prompt garantit YYYY-MM-DD ou null."""
         if value is None or value == "":
             return None
         return value
-    # NOUVEAU
+    
+        # NOUVEAU
     statut_paiement: Literal["PAYE", "CREDIT"] = "PAYE"
 
     check_open_debt: bool = False
@@ -150,40 +161,70 @@ class AccountingExtractionLLMResult(BaseModel):
 # --- SCHÉMAS INTERNES (utilisés par le reste du système, amount_ttc en Decimal) ---
 
 class AccountingTransactionSchema(BaseModel):
-    """Une transaction individuelle, pour usage interne (Decimal pour la précision).
-    Obtenue par conversion depuis AccountingTransactionLLMSchema — ne jamais
-    passer ce schéma à with_structured_output()."""
+    """
+    Une transaction individuelle, pour usage interne.
+
+    Les montants sont en Decimal pour conserver la précision financière.
+
+    Ce schéma est obtenu par conversion depuis
+    AccountingTransactionLLMSchema et ne doit jamais être passé
+    directement à with_structured_output().
+    """
 
     model_config = ConfigDict(extra="ignore")
 
-    transaction_type: Literal["RECETTE", "DEPENSE", "PRET_DONNE", "PRET_RECU"]
+    transaction_type: Literal[
+        "RECETTE",
+        "DEPENSE",
+        "PRET_DONNE",
+        "PRET_RECU",
+    ]
+
     amount_ttc: Optional[Decimal] = Field(default=None, ge=0)
+    amount_ht: Optional[Decimal] = Field(default=None, ge=0)
+    tax_amount: Optional[Decimal] = Field(default=None, ge=0)
+
     currency: Optional[str] = Field(default=None, max_length=5)
     category: Optional[str] = None
     payment_method: Optional[AccountingPaymentMethodEnum] = None
     contact: Optional[str] = None
     date_operation: Optional[date] = None
     description: str = ""
+
+    statut_paiement: Literal["PAYE", "CREDIT"] = "PAYE"
+
     check_open_debt: bool = False
     check_open_loan: bool = False
+
     confidence: AccountingConfidenceEnum = AccountingConfidenceEnum.MEDIUM
 
-    @field_validator("amount_ttc", mode="before")
+    @field_validator(
+        "amount_ttc",
+        "amount_ht",
+        "tax_amount",
+        mode="before",
+    )
     @classmethod
     def parse_amount(cls, value: Any) -> Optional[Decimal]:
-        """Sécurise la conversion en évitant les anomalies d'arrondi binaire des floats."""
+        """
+        Convertit proprement les floats venant du LLM en Decimal
+        sans subir les erreurs d'arrondi binaire des floats.
+        """
         if value is None:
             return None
+
         if isinstance(value, Decimal):
             return value
+
         return Decimal(str(value))
 
     @classmethod
-    def from_llm_schema(cls, llm_schema: AccountingTransactionLLMSchema) -> "AccountingTransactionSchema":
+    def from_llm_schema(
+        cls,
+        llm_schema: AccountingTransactionLLMSchema,
+    ) -> "AccountingTransactionSchema":
         """Convertit une sortie LLM (float) en schéma interne (Decimal)."""
         return cls(**llm_schema.model_dump())
-
-    statut_paiement: Literal["PAYE", "CREDIT"] = "PAYE"
 
 
 class AccountingExtractionResult(BaseModel):

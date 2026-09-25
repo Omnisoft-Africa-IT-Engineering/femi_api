@@ -147,55 +147,110 @@ def _impute_to_open_operation(entreprise, contact, txn: AccountingTransactionSch
     return derniere_operation_maj
 
 
-def _save_single_transaction(entreprise, utilisateur, txn: AccountingTransactionSchema, source, raw_text) -> Operation:
+def _save_single_transaction(
+    entreprise,
+    utilisateur,
+    txn: AccountingTransactionSchema,
+    source,
+    raw_text,
+) -> Operation:
     """
     Persiste UNE transaction.
 
     Si check_open_debt ou check_open_loan est True ET qu'une opération
     ouverte existe pour ce contact, le montant est imputé à cette opération
-    (montant_paye incrémenté) plutôt que d'enregistrer une nouvelle ligne
-    indépendante — voir _impute_to_open_operation().
+    plutôt que de créer une nouvelle ligne.
 
-    Si check_open_debt/check_open_loan est True mais qu'AUCUNE opération
-    ouverte n'existe, on retombe sur le comportement par défaut : créer une
-    opération standalone.
+    Sinon, une nouvelle Operation est créée.
+
+    Si une TVA est détectée, l'opération est automatiquement rattachée
+    à l'échéance TVA correspondant à sa période.
     """
+
     contact = _resolve_contact(entreprise, txn.contact)
 
+    # ---------------------------------------------------------
+    # REMBOURSEMENT / IMPUTATION D'UNE OPÉRATION EXISTANTE
+    # ---------------------------------------------------------
+
     if (txn.check_open_debt or txn.check_open_loan) and contact is not None:
-        operation_imputee = _impute_to_open_operation(entreprise, contact, txn)
+        operation_imputee = _impute_to_open_operation(
+            entreprise,
+            contact,
+            txn,
+        )
+
         if operation_imputee is not None:
             return operation_imputee
+
+    # ---------------------------------------------------------
+    # CRÉATION DE L'OPÉRATION
+    # ---------------------------------------------------------
 
     operation = Operation.objects.create(
         entreprise=entreprise,
         transaction_type=txn.transaction_type,
+
+        # Montants comptables
         amount_ttc=txn.amount_ttc,
-        amount_ht=getattr(txn, "amount_ht", None),
-        tax_amount=getattr(txn, "tax_amount", None),
+        amount_ht=txn.amount_ht,
+        tax_amount=txn.tax_amount,
+
+        # Informations générales
         currency=txn.currency or "XOF",
         category=txn.category,
-        payment_method=txn.payment_method.value if txn.payment_method else None,
-        transaction_date=txn.date_operation or timezone_today(),
+
+        payment_method=(
+            txn.payment_method.value
+            if txn.payment_method
+            else None
+        ),
+
+        transaction_date=(
+            txn.date_operation
+            or timezone_today()
+        ),
+
         description=txn.description,
         contact=contact,
         source=source,
+
+        # Paiement
         statut_paiement=txn.statut_paiement,
-        montant_paye=0 if txn.statut_paiement == "CREDIT" else txn.amount_ttc,
+        montant_paye=(
+            0
+            if txn.statut_paiement == "CREDIT"
+            else txn.amount_ttc
+        ),
     )
 
-    if getattr(operation, "tax_amount", None) is not None and operation.tax_amount > 0:
+    # ---------------------------------------------------------
+    # ÉCHÉANCE FISCALE TVA
+    # ---------------------------------------------------------
+
+    if (
+        operation.tax_amount is not None
+        and operation.tax_amount > 0
+    ):
         creer_ou_mettre_a_jour_echeance_tva(operation)
 
+    # ---------------------------------------------------------
+    # LOG
+    # ---------------------------------------------------------
+
     logger.info(
-        "[AccountingManager] Operation créée : id=%s type=%s montant=%s contact=%s",
+        "[AccountingManager] Operation créée : "
+        "id=%s type=%s TTC=%s HT=%s TVA=%s contact=%s",
         operation.id,
         operation.transaction_type,
         operation.amount_ttc,
+        operation.amount_ht,
+        operation.tax_amount,
         contact.nom if contact else None,
     )
+
     return operation
-    
+
 
 def save_accounting_transactions(entreprise, utilisateur, result: AccountingExtractionResult, source, raw_text) -> list[Operation]:
     """
