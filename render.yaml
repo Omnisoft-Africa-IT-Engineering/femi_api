@@ -12,6 +12,48 @@ services:
       - key: DEBUG
         value: "False"
       - key: SECRET_KEY
-        generateValue: true # Render va générer une clé secrète sécurisée tout seul !
+        generateValue: true
       - key: DATABASE_URL
-        sync: false # On ira la coller à la main sur le dashboard pour plus de sécurité
+        sync: false
+
+      # --- WhatsApp ---
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false
+      - key: WHATSAPP_APP_SECRET
+        sync: false
+      - key: WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+
+      # --- LLM ---
+      - key: FEMI_LLM_PROVIDER
+        value: cloudflare
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_API_KEY
+        sync: false
+
+      # --- Vision (OCR) ---
+      - key: FEMI_VISION_MODEL
+        value: "@cf/meta/llama-3.2-11b-vision-instruct"
+
+      # --- Audio (STT) ---
+      - key: FEMI_STT_ENGINE
+        value: parakeet
+
+      # --- Stockage ---
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+
+      # --- Celery / Redis ---
+      - key: CELERY_BROKER_URL
+        sync: false
+      - key: CELERY_RESULT_BACKEND
+        sync: false
+
+      # --- Cron ---
+      - key: CRON_SECRET
+        sync: false

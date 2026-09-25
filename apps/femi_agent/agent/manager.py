@@ -12,6 +12,7 @@ from apps.femi_account.models import Entreprise, Operation, PieceJustificative, 
 from apps.femi_agent.agent.pipeline import run_ai_extraction, arun_ai_extraction
 from apps.femi_agent.schemas import ProcessResult
 from apps.femi_agent.constants import GREETING_PATTERN, ANALYTICAL_PATTERN
+from apps.femi_account.fiscal import creer_ou_mettre_a_jour_echeance_tva
 from apps.femi_account.integrations.supabase_storage import upload_file
 logger = logging.getLogger(__name__)
 
@@ -203,52 +204,83 @@ class FemiAgentManager:
             return secteur_nom, [{"nom": p["nom"], "prix": p["prix_unitaire"]} for p in qs]
         # Commerce : catalogue Produit pas encore construit (décision reportée du 09/09).
         return secteur_nom, None
-    
-    @classmethod
-    def _save_operation(cls, entreprise, utilisateur, parsed_data, source, raw_text, image_file) -> Operation:
-        """Centralise la création atomique d'une opération en base de données.
 
-        NOTE TEMPORAIRE (voir session du 09/09) : cree_par, amount_ht, tax_amount,
-        confidence_score, raw_input_text ne sont PAS envoyés à Operation.objects.create()
-        car ces champs n'existent plus sur le modèle Operation actuel (retirés par la
-        migration 0002). Décision : ne pas restaurer le modèle pour l'instant.
-        TODO : réintégrer une fois la décision d'architecture prise.
-        """
-        logger.warning(
-            "[FemiAgent] Champs non persistés (modèle Operation incomplet) : "
-            "cree_par=%s, amount_ht=%s, tax_amount=%s, confidence_score=%s, raw_input_text_len=%s",
-            utilisateur, parsed_data.amount_ht, parsed_data.tax_amount,
-            parsed_data.confidence_score,
-            len(raw_text) if raw_text else 0,
+@classmethod
+def _save_operation(
+    cls,
+    entreprise,
+    utilisateur,
+    parsed_data,
+    source,
+    raw_text,
+    image_file,
+) -> Operation:
+    """Crée une opération et met automatiquement à jour son échéance fiscale."""
+
+    with transaction.atomic():
+        operation = Operation.objects.create(
+            entreprise=entreprise,
+            transaction_type=parsed_data.transaction_type,
+
+            # Montants
+            amount_ttc=parsed_data.amount_ttc,
+            amount_ht=getattr(parsed_data, "amount_ht", None),
+            tax_amount=getattr(parsed_data, "tax_amount", None),
+
+            # Informations générales
+            currency=parsed_data.currency or entreprise.devise or "XOF",
+            category=parsed_data.category,
+            vendor_or_client=parsed_data.vendor_or_client,
+
+            payment_method=(
+                parsed_data.payment_method.value
+                if hasattr(parsed_data.payment_method, "value")
+                else parsed_data.payment_method
+            ),
+
+            transaction_date=parsed_data.transaction_date,
+            description=parsed_data.description,
+            source=source,
         )
 
-        with transaction.atomic():
-            operation = Operation.objects.create(
-                entreprise=entreprise,
-                transaction_type=parsed_data.transaction_type,
-                amount_ttc=parsed_data.amount_ttc,
-                currency=parsed_data.currency,
-                category=parsed_data.category,
-                vendor_or_client=parsed_data.vendor_or_client,
-                payment_method=(
-                    parsed_data.payment_method.value
-                    if hasattr(parsed_data.payment_method, "value")
-                    else parsed_data.payment_method
-                ),
-                transaction_date=parsed_data.transaction_date,
-                description=parsed_data.description,
-                source=source,
+        # ---------------------------------------------------------
+        # ÉCHÉANCE FISCALE TVA
+        # ---------------------------------------------------------
+        # Si l'IA a détecté une TVA, on crée ou met à jour
+        # l'échéance TVA correspondant à la période de l'opération.
+        if (
+            getattr(operation, "tax_amount", None) is not None
+            and operation.tax_amount > 0
+        ):
+            creer_ou_mettre_a_jour_echeance_tva(operation)
+
+        # ---------------------------------------------------------
+        # PRESTATIONS
+        # ---------------------------------------------------------
+        if getattr(parsed_data, "lignes_prestations", None):
+            cls._attach_prestations_realisees(
+                operation,
+                entreprise,
+                parsed_data.lignes_prestations,
             )
-            if getattr(parsed_data, "lignes_prestations", None):
-                cls._attach_prestations_realisees(operation, entreprise, parsed_data.lignes_prestations)
 
-        # Hors du bloc atomic() : l'appel réseau vers Supabase Storage ne doit
-        # pas garder une transaction DB ouverte pendant qu'il attend.
-        if image_file is not None:
-            cls._attach_piece_justificative(operation, image_file)
+    # L'upload Supabase Storage reste hors de la transaction DB.
+    if image_file is not None:
+        cls._attach_piece_justificative(
+            operation,
+            image_file,
+        )
 
-        return operation
+    logger.info(
+        "[FemiAgent] Opération créée : id=%s | type=%s | TTC=%s | HT=%s | TAXE=%s",
+        operation.id,
+        operation.transaction_type,
+        operation.amount_ttc,
+        operation.amount_ht,
+        operation.tax_amount,
+    )
 
+    return operation
     @classmethod
     def _attach_piece_justificative(cls, operation: Operation, image_file) -> None:
         """

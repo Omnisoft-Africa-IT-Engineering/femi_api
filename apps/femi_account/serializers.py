@@ -7,7 +7,14 @@ from django.utils import timezone
 from datetime import timedelta
 from django.contrib.auth import authenticate
 
-from .models import Utilisateur, Entreprise, Plan, Abonnement, EcheanceFiscale
+from .models import (
+    Utilisateur,
+    Entreprise,
+    Plan,
+    Abonnement,
+    EcheanceFiscale,
+    PieceJustificative,
+)
 
 
 class RegisterSerializer(serializers.Serializer):
@@ -101,16 +108,43 @@ class PublicLoginSerializer(serializers.Serializer):
 
 
 class EcheanceFiscaleSerializer(serializers.ModelSerializer):
-    """Serializer CRUD pour les Échéances Fiscales."""
+    """Serializer des échéances fiscales avec leurs pièces justificatives."""
+
+    pieces_justificatives = serializers.SerializerMethodField()
+
     class Meta:
         model = EcheanceFiscale
         fields = [
-            'id',
-            'type_echeance',
-            'libelle',
-            'date_echeance',
-            'statut',
-            'dernier_rappel_envoye',
-            'date_paiement',
+            "id",
+            "type_echeance",
+            "libelle",
+            "date_echeance",
+            "periode",
+            "montant_taxe",
+            "statut",
+            "dernier_rappel_envoye",
+            "date_paiement",
+            "pieces_justificatives",
         ]
-        read_only_fields = ['id', 'dernier_rappel_envoye', 'date_paiement']
+        read_only_fields = [
+            "id",
+            "dernier_rappel_envoye",
+            "date_paiement",
+            "pieces_justificatives",
+        ]
+
+    def get_pieces_justificatives(self, obj):
+        pieces = PieceJustificative.objects.filter(
+            operation__in=obj.operations.all()
+        ).order_by("-id")
+
+        return [
+            {
+                "id": piece.id,
+                "nom_fichier": piece.nom_fichier,
+                "url_fichier": piece.url_fichier,
+                "type_mime": piece.type_mime,
+                "taille_octets": piece.taille_octets,
+            }
+            for piece in pieces
+        ]

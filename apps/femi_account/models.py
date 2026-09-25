@@ -5,10 +5,10 @@ import random
 from datetime import timedelta
 from django.utils import timezone
 
+
 class Utilisateur(AbstractUser):
-    """Mod??le d'utilisateur personnalis?? pour Femi."""
+    """Modèle d'utilisateur personnalisé pour Femi."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    # ??? AJOUTER CE CHAMP : Nom complet saisi ?? l'??tape 1 du formulaire
     full_name = models.CharField(max_length=255, blank=True, null=True)
     email = models.EmailField("email address", unique=True, blank=True, null=True)
     entreprise = models.ForeignKey(
@@ -30,21 +30,21 @@ class Utilisateur(AbstractUser):
 
 
 class Secteur(models.Model):
-    """Secteur d'activit?? d'une entreprise (Commerce, Restauration, etc.)."""
+    """Secteur d'activité d'une entreprise (Commerce, Restauration, etc.)."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     nom = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True, null=True)
 
     class Meta:
-        verbose_name = "Secteur d'activit??"
-        verbose_name_plural = "Secteurs d'activit??"
+        verbose_name = "Secteur d'activité"
+        verbose_name_plural = "Secteurs d'activité"
 
     def __str__(self):
         return self.nom
 
 
 class Entreprise(models.Model):
-    """Mod??le repr??sentant une entreprise cliente."""
+    """Modèle représentant une entreprise cliente."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     nom = models.CharField(max_length=255)
     adresse = models.CharField(max_length=255, blank=True, null=True)
@@ -55,16 +55,25 @@ class Entreprise(models.Model):
         blank=True,
         related_name="entreprises"
     )
-    # ??? AJOUTER CES 2 CHAMPS :
-    type_activite = models.CharField(max_length=50, blank=True, null=True, help_text="ex: achatvent, depotvente, personnel")
-    type_entreprise = models.CharField(max_length=50, blank=True, null=True, help_text="ex: individuel, sarl, sa, autre")
+    type_activite = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="ex: achatvent, depotvente, personnel"
+    )
+    type_entreprise = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        help_text="ex: individuel, sarl, sa, autre"
+    )
 
     rccm = models.CharField(max_length=100, blank=True, null=True)
     ifu = models.CharField(max_length=100, blank=True, null=True)
     regime_fiscal = models.CharField(max_length=100, blank=True, null=True)
     devise = models.CharField(max_length=10, default="XOF")
     created_at = models.DateTimeField(auto_now_add=True)
-   
+
     class Meta:
         verbose_name = "Entreprise"
         verbose_name_plural = "Entreprises"
@@ -74,22 +83,49 @@ class Entreprise(models.Model):
 
 
 class Operation(models.Model):
-    """Op??ration financi??re ou transaction enregistr??e."""
+    """Opération financière ou transaction enregistrée."""
     TRANSACTION_TYPES = [
         ('RECETTE', 'Recette'),
-        ('DEPENSE', 'D??pense'),
-        ('PRET_DONNE', 'Pr??t donn??'),   # tu pr??tes ?? quelqu'un
-        ('PRET_RECU', 'Pr??t re??u'),     # on te pr??te
+        ('DEPENSE', 'Dépense'),
+        ('PRET_DONNE', 'Prêt donné'),
+        ('PRET_RECU', 'Prêt reçu'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
     entreprise = models.ForeignKey(
         Entreprise,
         on_delete=models.CASCADE,
         related_name="operations"
     )
-    transaction_type = models.CharField(max_length=10, choices=TRANSACTION_TYPES)
-    amount_ttc = models.DecimalField(max_digits=12, decimal_places=2)
+
+    transaction_type = models.CharField(
+        max_length=10,
+        choices=TRANSACTION_TYPES
+    )
+
+    # Montant total TTC
+    amount_ttc = models.DecimalField(
+        max_digits=12,
+        decimal_places=2
+    )
+
+    # Montant hors taxes
+    amount_ht = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+
+    # Montant de TVA / taxe extrait de la pièce
+    tax_amount = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+
     currency = models.CharField(max_length=10, default="XOF")
     category = models.CharField(max_length=100, blank=True, null=True)
     payment_method = models.CharField(max_length=50, blank=True, null=True)
@@ -97,7 +133,7 @@ class Operation(models.Model):
     description = models.TextField(blank=True, null=True)
     vendor_or_client = models.CharField(max_length=255, blank=True, null=True)
     source = models.CharField(max_length=50, blank=True, null=True)
-    
+
     contact = models.ForeignKey(
         'Contact',
         on_delete=models.SET_NULL,
@@ -105,26 +141,41 @@ class Operation(models.Model):
         blank=True,
         related_name="operations"
     )
+
     statut_paiement = models.CharField(
         max_length=10,
-        choices=[('PAYE', 'Pay??'), ('CREDIT', '?? cr??dit')],
+        choices=[
+            ('PAYE', 'Payé'),
+            ('CREDIT', 'À crédit')
+        ],
         default='PAYE'
     )
+
     montant_paye = models.DecimalField(
-        max_digits=12, decimal_places=2, default=0,
-        help_text="Cumul des paiements re??us. Pour une op??ration PAYE, "
-                   "correspond au montant total (voir save())."
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text=(
+            "Cumul des paiements reçus. Pour une opération PAYE, "
+            "correspond au montant total (voir save())."
+        )
     )
+
     class Meta:
-        verbose_name = "Op??ration"
-        verbose_name_plural = "Op??rations"
+        verbose_name = "Opération"
+        verbose_name_plural = "Opérations"
 
     def __str__(self):
-        return f"{self.transaction_type} - {self.amount_ttc} {self.currency} ({self.entreprise.nom})"
-    
+        return (
+            f"{self.transaction_type} - "
+            f"{self.amount_ttc} {self.currency} "
+            f"({self.entreprise.nom})"
+        )
+
     def save(self, *args, **kwargs):
         if self.statut_paiement == 'PAYE' and self.montant_paye == 0:
             self.montant_paye = self.amount_ttc
+
         super().save(*args, **kwargs)
 
 
@@ -140,25 +191,28 @@ class Niveau(models.Model):
         ordering = ['numero']
 
     def __str__(self):
-        return f"Niveau {self.numero} ??? {self.nom}"
+        return f"Niveau {self.numero} — {self.nom}"
 
 
 class Kpi(models.Model):
-    """Indicateur cl?? de performance, rattach?? ?? un niveau et un secteur."""
+    """Indicateur clé de performance, rattaché à un niveau et un secteur."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
     niveau = models.ForeignKey(
         Niveau,
         on_delete=models.CASCADE,
         related_name="kpis"
     )
+
     secteur = models.ForeignKey(
         Secteur,
         on_delete=models.CASCADE,
         related_name="kpis",
         null=True,
         blank=True,
-        help_text="Laisser vide si le KPI est commun ?? tous les secteurs"
+        help_text="Laisser vide si le KPI est commun à tous les secteurs"
     )
+
     nom = models.CharField(max_length=150)
     icone = models.CharField(max_length=10, blank=True, null=True)
     formule_description = models.TextField(blank=True, null=True)
@@ -173,15 +227,17 @@ class Kpi(models.Model):
 
 
 class InsightIA(models.Model):
-    """R??sultat d'analyse g??n??r?? par l'IA pour une entreprise (Niveau 5)."""
+    """Résultat d'analyse généré par l'IA pour une entreprise (Niveau 5)."""
+
     TYPE_CHOICES = [
         ('ANOMALIE', 'Anomalie'),
         ('TENDANCE', 'Tendance'),
-        ('PREVISION', 'Pr??vision'),
+        ('PREVISION', 'Prévision'),
         ('ALERTE', 'Alerte'),
         ('RECOMMANDATION', 'Recommandation'),
-        ('OPPORTUNITE', 'Opportunit??'),
+        ('OPPORTUNITE', 'Opportunité'),
     ]
+
     GRAVITE_CHOICES = [
         ('INFO', 'Information'),
         ('ATTENTION', 'Attention'),
@@ -189,15 +245,27 @@ class InsightIA(models.Model):
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
     entreprise = models.ForeignKey(
         Entreprise,
         on_delete=models.CASCADE,
         related_name="insights"
     )
-    type = models.CharField(max_length=20, choices=TYPE_CHOICES)
+
+    type = models.CharField(
+        max_length=20,
+        choices=TYPE_CHOICES
+    )
+
     message = models.TextField()
     action_recommandee = models.TextField(blank=True, null=True)
-    niveau_gravite = models.CharField(max_length=20, choices=GRAVITE_CHOICES, default='INFO')
+
+    niveau_gravite = models.CharField(
+        max_length=20,
+        choices=GRAVITE_CHOICES,
+        default='INFO'
+    )
+
     date_detection = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -206,28 +274,39 @@ class InsightIA(models.Model):
         ordering = ['-date_detection']
 
     def __str__(self):
-        return f"[{self.type}] {self.entreprise.nom} - {self.message[:50]}"
+        return (
+            f"[{self.type}] "
+            f"{self.entreprise.nom} - "
+            f"{self.message[:50]}"
+        )
 
 
 class Categorie(models.Model):
-    """Cat??gorie de transaction, propre ?? une entreprise."""
+    """Catégorie de transaction, propre à une entreprise."""
+
     TYPE_CHOICES = [
         ('RECETTE', 'Recette'),
-        ('DEPENSE', 'D??pense'),
+        ('DEPENSE', 'Dépense'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
     entreprise = models.ForeignKey(
         Entreprise,
         on_delete=models.CASCADE,
         related_name="categories"
     )
+
     nom = models.CharField(max_length=100)
-    type = models.CharField(max_length=10, choices=TYPE_CHOICES)
+
+    type = models.CharField(
+        max_length=10,
+        choices=TYPE_CHOICES
+    )
 
     class Meta:
-        verbose_name = "Cat??gorie"
-        verbose_name_plural = "Cat??gories"
+        verbose_name = "Catégorie"
+        verbose_name_plural = "Catégories"
         unique_together = ('entreprise', 'nom', 'type')
 
     def __str__(self):
@@ -236,20 +315,27 @@ class Categorie(models.Model):
 
 class Contact(models.Model):
     """Client ou fournisseur d'une entreprise."""
+
     TYPE_CHOICES = [
         ('CLIENT', 'Client'),
         ('FOURNISSEUR', 'Fournisseur'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
     entreprise = models.ForeignKey(
         Entreprise,
         on_delete=models.CASCADE,
         related_name="contacts"
     )
+
     nom = models.CharField(max_length=255)
     telephone = models.CharField(max_length=30, blank=True, null=True)
-    type = models.CharField(max_length=15, choices=TYPE_CHOICES)
+
+    type = models.CharField(
+        max_length=15,
+        choices=TYPE_CHOICES
+    )
 
     class Meta:
         verbose_name = "Contact"
@@ -260,56 +346,118 @@ class Contact(models.Model):
 
 
 class Plan(models.Model):
-    """Offre d'abonnement propos??e par Femi."""
+    """Offre d'abonnement proposée par Femi."""
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    nom = models.CharField(max_length=100) # Micro, Pro, Business
-    description = models.TextField(blank=True, null=True) # Description courte
-    prix = models.DecimalField(max_digits=10, decimal_places=2) # 10.99, 20.99, 30.99
-    est_a_partir_de = models.BooleanField(default=False, help_text="Cocher si le prix est un prix de d??part ('?? partir de')")
-    devise = models.CharField(max_length=5, default="EUR") # EUR (???)
-    duree_jours = models.PositiveIntegerField(default=30) # 30 jours (mensuel)
-    populaire = models.BooleanField(default=False, help_text="Badge 'Le plus choisi'")
-    fonctionnalites = models.JSONField(default=list, help_text="Liste des fonctionnalit??s incluses")
-    
-    limite_operations_mensuelles = models.PositiveIntegerField(null=True, blank=True)
-    limite_utilisateurs = models.PositiveIntegerField(null=True, blank=True)
+
+    nom = models.CharField(max_length=100)
+    description = models.TextField(blank=True, null=True)
+
+    prix = models.DecimalField(
+        max_digits=10,
+        decimal_places=2
+    )
+
+    est_a_partir_de = models.BooleanField(
+        default=False,
+        help_text="Cocher si le prix est un prix de départ ('à partir de')"
+    )
+
+    devise = models.CharField(
+        max_length=5,
+        default="EUR"
+    )
+
+    duree_jours = models.PositiveIntegerField(
+        default=30
+    )
+
+    populaire = models.BooleanField(
+        default=False,
+        help_text="Badge 'Le plus choisi'"
+    )
+
+    fonctionnalites = models.JSONField(
+        default=list,
+        help_text="Liste des fonctionnalités incluses"
+    )
+
+    limite_operations_mensuelles = models.PositiveIntegerField(
+        null=True,
+        blank=True
+    )
+
+    limite_utilisateurs = models.PositiveIntegerField(
+        null=True,
+        blank=True
+    )
 
     class Meta:
         verbose_name = "Plan d'abonnement"
         verbose_name_plural = "Plans d'abonnement"
 
     def __str__(self):
-        prefix = "?? partir de " if self.est_a_partir_de else ""
+        prefix = "À partir de " if self.est_a_partir_de else ""
         return f"{self.nom} - {prefix}{self.prix} {self.devise}/mois"
-    
+
+
 class Abonnement(models.Model):
-    """Souscription d'une Entreprise ?? un Plan pr??cis."""
+    """Souscription d'une Entreprise à un Plan précis."""
+
     STATUT_CHOICES = [
         ('ACTIF', 'Actif'),
-        ('EXPIRE', 'Expir??'),
-        ('ANNULE', 'Annul??'),
+        ('EXPIRE', 'Expiré'),
+        ('ANNULE', 'Annulé'),
         ('EN_ATTENTE', 'En attente'),
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
     entreprise = models.ForeignKey(
         Entreprise,
         on_delete=models.CASCADE,
         related_name="abonnements"
     )
+
     plan = models.ForeignKey(
         Plan,
         on_delete=models.PROTECT,
         related_name="abonnements"
     )
-    prix_paye = models.DecimalField(max_digits=10, decimal_places=2)
-    # ??? AJOUTER CE CHAMP : Mode de r??glement (Mobile Money, Carte, etc.)
-    mode_paiement = models.CharField(max_length=50, blank=True, null=True)
-    transaction_id = models.CharField(max_length=100, blank=True, null=True, unique=True)
-    payment_url = models.URLField(max_length=500, blank=True, null=True)
+
+    prix_paye = models.DecimalField(
+        max_digits=10,
+        decimal_places=2
+    )
+
+    mode_paiement = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True
+    )
+
+    transaction_id = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        unique=True
+    )
+
+    payment_url = models.URLField(
+        max_length=500,
+        blank=True,
+        null=True
+    )
+
     date_debut = models.DateField()
     date_fin = models.DateField()
-    statut = models.CharField(max_length=15, choices=STATUT_CHOICES, default='EN_ATTENTE')
+
+    statut = models.CharField(
+        max_length=15,
+        choices=STATUT_CHOICES,
+        default='EN_ATTENTE'
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -319,14 +467,17 @@ class Abonnement(models.Model):
 
     def __str__(self):
         return f"{self.entreprise.nom} - {self.plan.nom} ({self.statut})"
-    
+
+
 class PieceJustificative(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
     operation = models.ForeignKey(
         'Operation',
         on_delete=models.CASCADE,
         related_name='pieces_justificatives'
     )
+
     nom_fichier = models.CharField(max_length=255)
     url_fichier = models.CharField(max_length=500)
     type_mime = models.CharField(max_length=100)
@@ -334,19 +485,41 @@ class PieceJustificative(models.Model):
     date_televersement = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        verbose_name = "Pi??ce justificative"
-        verbose_name_plural = "Pi??ces justificatives"
+        verbose_name = "Pièce justificative"
+        verbose_name_plural = "Pièces justificatives"
 
     def __str__(self):
         return f"{self.nom_fichier} ({self.operation_id})"
-    
+
+
 class Prestation(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    entreprise = models.ForeignKey('Entreprise', on_delete=models.CASCADE, related_name="prestations")
+
+    entreprise = models.ForeignKey(
+        'Entreprise',
+        on_delete=models.CASCADE,
+        related_name="prestations"
+    )
+
     nom = models.CharField(max_length=150)
-    prix_unitaire = models.DecimalField(max_digits=12, decimal_places=2)
-    cout_unitaire = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-    duree_estimee_minutes = models.PositiveIntegerField(null=True, blank=True)
+
+    prix_unitaire = models.DecimalField(
+        max_digits=12,
+        decimal_places=2
+    )
+
+    cout_unitaire = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+
+    duree_estimee_minutes = models.PositiveIntegerField(
+        null=True,
+        blank=True
+    )
+
     actif = models.BooleanField(default=True)
 
     class Meta:
@@ -355,57 +528,56 @@ class Prestation(models.Model):
 
 class PrestationRealisee(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    operation = models.ForeignKey('Operation', on_delete=models.CASCADE, related_name="prestations_realisees")
-    prestation = models.ForeignKey('Prestation', on_delete=models.PROTECT, related_name="realisations")
+
+    operation = models.ForeignKey(
+        'Operation',
+        on_delete=models.CASCADE,
+        related_name="prestations_realisees"
+    )
+
+    prestation = models.ForeignKey(
+        'Prestation',
+        on_delete=models.PROTECT,
+        related_name="realisations"
+    )
+
     quantite = models.PositiveIntegerField(default=1)
-    prix_unitaire_facture = models.DecimalField(max_digits=12, decimal_places=2)
-    duree_minutes = models.PositiveIntegerField(null=True, blank=True)
-    sous_total = models.DecimalField(max_digits=12, decimal_places=2, editable=False)
+
+    prix_unitaire_facture = models.DecimalField(
+        max_digits=12,
+        decimal_places=2
+    )
+
+    duree_minutes = models.PositiveIntegerField(
+        null=True,
+        blank=True
+    )
+
+    sous_total = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        editable=False
+    )
 
     def save(self, *args, **kwargs):
         self.sous_total = self.quantite * self.prix_unitaire_facture
         super().save(*args, **kwargs)
 
-""" class EcheanceFiscale(models.Model):
-    STATUT_CHOICES = [
-        ('EN_ATTENTE', 'En attente'),
-        ('RAPPELE', 'Rappelé'),
-        ('PAYE', 'Payé'),
-        ('EN_RETARD', 'En retard'),
-    ]
 
-    TYPE_IMPOT_CHOICES = [
-        ('TPU_ACOMPTE', 'Acompte TPU & Patente'),
-        ('TPU_ANNUEL', 'Déclaration Annuelle TPU'),
-        ('TVA', 'TVA Mensuelle'),
-        ('SYSCOHADA', 'Liasse Fiscale SYSCOHADA'),
-    ]
-
-    # Remplace 'Entreprise' par ton modèle d'entreprise/utilisateur
-    entreprise = models.ForeignKey('Entreprise', on_delete=models.CASCADE, related_name='echeances')
-    libelle = models.CharField(max_length=255)
-    type_impot = models.CharField(max_length=50, choices=TYPE_IMPOT_CHOICES)
-    date_limite = models.DateField()
-    statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default='EN_ATTENTE')
-    date_paiement = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        ordering = ['date_limite']
-
-    def __str__(self):
-        return f"{self.libelle} - {self.date_limite} ({self.statut})"
- """
 class WhatsAppLinkRequest(models.Model):
     """
-    Demande de liaison d'un num??ro WhatsApp ?? un compte Utilisateur existant,
-    avec v??rification par code OTP envoy?? sur WhatsApp (prot??ge contre
-    l'usurpation d'un num??ro appartenant ?? quelqu'un d'autre).
+    Demande de liaison d'un numéro WhatsApp à un compte Utilisateur existant,
+    avec vérification par code OTP envoyé sur WhatsApp.
     """
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
     utilisateur = models.ForeignKey(
-        'Utilisateur', on_delete=models.CASCADE, related_name="whatsapp_link_requests"
+        'Utilisateur',
+        on_delete=models.CASCADE,
+        related_name="whatsapp_link_requests"
     )
+
     telephone_whatsapp = models.CharField(max_length=30)
     code = models.CharField(max_length=6)
     tentatives = models.PositiveSmallIntegerField(default=0)
@@ -420,10 +592,15 @@ class WhatsAppLinkRequest(models.Model):
     def save(self, *args, **kwargs):
         if not self.expires_at:
             self.expires_at = timezone.now() + timedelta(minutes=10)
+
         super().save(*args, **kwargs)
 
     def est_valide(self):
-        return not self.utilisee and timezone.now() < self.expires_at and self.tentatives < 5
+        return (
+            not self.utilisee
+            and timezone.now() < self.expires_at
+            and self.tentatives < 5
+        )
 
     @staticmethod
     def generer_code():
@@ -442,17 +619,24 @@ class Conversation(models.Model):
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
     utilisateur = models.ForeignKey(
         Utilisateur,
         on_delete=models.CASCADE,
         related_name="conversations"
     )
+
     entreprise = models.ForeignKey(
         Entreprise,
         on_delete=models.CASCADE,
         related_name="conversations"
     )
-    canal_origine = models.CharField(max_length=10, choices=CANAL_CHOICES)
+
+    canal_origine = models.CharField(
+        max_length=10,
+        choices=CANAL_CHOICES
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -485,16 +669,32 @@ class ConversationHistory(models.Model):
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
     conversation = models.ForeignKey(
         Conversation,
         on_delete=models.CASCADE,
         related_name="messages"
     )
-    canal = models.CharField(max_length=10, choices=CANAL_CHOICES)
-    expediteur = models.CharField(max_length=10, choices=EXPEDITEUR_CHOICES)
-    type_message = models.CharField(max_length=10, choices=TYPE_MESSAGE_CHOICES, default='TEXTE')
+
+    canal = models.CharField(
+        max_length=10,
+        choices=CANAL_CHOICES
+    )
+
+    expediteur = models.CharField(
+        max_length=10,
+        choices=EXPEDITEUR_CHOICES
+    )
+
+    type_message = models.CharField(
+        max_length=10,
+        choices=TYPE_MESSAGE_CHOICES,
+        default='TEXTE'
+    )
+
     contenu_texte = models.TextField(blank=True, null=True)
     fichier_url = models.CharField(max_length=500, blank=True, null=True)
+
     operation = models.ForeignKey(
         Operation,
         on_delete=models.SET_NULL,
@@ -502,6 +702,7 @@ class ConversationHistory(models.Model):
         blank=True,
         related_name="messages_lies"
     )
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -511,9 +712,6 @@ class ConversationHistory(models.Model):
 
     def __str__(self):
         return f"[{self.canal}] {self.expediteur} - {self.type_message}"
-
-
-from django.db import models
 
 
 class EcheanceFiscale(models.Model):
@@ -537,12 +735,51 @@ class EcheanceFiscale(models.Model):
         on_delete=models.CASCADE,
         related_name="echeances_fiscales",
     )
-    type_echeance = models.CharField(max_length=50, choices=TYPE_ECHEANCE_CHOICES)
+
+    type_echeance = models.CharField(
+        max_length=50,
+        choices=TYPE_ECHEANCE_CHOICES
+    )
+
     libelle = models.CharField(max_length=255)
+
     date_echeance = models.DateField()
-    statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default="EN_ATTENTE")
-    dernier_rappel_envoye = models.DateTimeField(null=True, blank=True)
-    date_paiement = models.DateTimeField(null=True, blank=True)
+
+    periode = models.CharField(
+        max_length=7,
+        null=True,
+        blank=True,
+        help_text="Période fiscale au format YYYY-MM"
+    )
+
+    montant_taxe = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+    )
+
+    operations = models.ManyToManyField(
+        "Operation",
+        blank=True,
+        related_name="echeances_fiscales",
+    )
+
+    statut = models.CharField(
+        max_length=20,
+        choices=STATUT_CHOICES,
+        default="EN_ATTENTE"
+    )
+
+    dernier_rappel_envoye = models.DateTimeField(
+        null=True,
+        blank=True
+    )
+
+    date_paiement = models.DateTimeField(
+        null=True,
+        blank=True
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -553,14 +790,6 @@ class EcheanceFiscale(models.Model):
     def __str__(self):
         return f"{self.entreprise} - {self.libelle} ({self.date_echeance})"
 
-# ============================================================
-# À COLLER À LA FIN de apps/femi_account/models.py
-# (après la classe EcheanceFiscale), puis :
-#   python manage.py makemigrations femi_account
-#   python manage.py migrate
-# ============================================================
-
-
 class AppareilNotification(models.Model):
     """Téléphone d'un utilisateur, identifié par son token FCM (push)."""
 
@@ -570,16 +799,29 @@ class AppareilNotification(models.Model):
         ("WEB", "Web"),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False
+    )
+
     utilisateur = models.ForeignKey(
         "Utilisateur",
         on_delete=models.CASCADE,
         related_name="appareils",
     )
-    # Unique : si le même téléphone se reconnecte avec un autre compte,
-    # on réassigne le token à ce compte au lieu de le dupliquer.
-    token = models.CharField(max_length=512, unique=True)
-    plateforme = models.CharField(max_length=10, choices=PLATEFORME_CHOICES, blank=True)
+
+    token = models.CharField(
+        max_length=512,
+        unique=True
+    )
+
+    plateforme = models.CharField(
+        max_length=10,
+        choices=PLATEFORME_CHOICES,
+        blank=True
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -595,19 +837,25 @@ class Notification(models.Model):
     """Notification affichée dans le centre de notifications de l'app."""
 
     PALIER_CHOICES = [
-        ("J7", "7 jours avant"),
-        ("J3", "3 jours avant"),
+        ("J10", "10 jours avant"),
+        ("J5", "5 jours avant"),
         ("J1", "1 jour avant"),
         ("J0", "Jour J"),
         ("RETARD", "Échéance dépassée"),
     ]
 
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False
+    )
+
     utilisateur = models.ForeignKey(
         "Utilisateur",
         on_delete=models.CASCADE,
         related_name="notifications",
     )
+
     echeance = models.ForeignKey(
         "EcheanceFiscale",
         on_delete=models.CASCADE,
@@ -615,20 +863,37 @@ class Notification(models.Model):
         blank=True,
         related_name="notifications",
     )
-    palier = models.CharField(max_length=10, choices=PALIER_CHOICES, blank=True)
-    titre = models.CharField(max_length=150)
+
+    palier = models.CharField(
+        max_length=10,
+        choices=PALIER_CHOICES,
+        blank=True
+    )
+
+    titre = models.CharField(
+        max_length=150
+    )
+
     message = models.TextField()
+
     lue = models.BooleanField(default=False)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["-created_at"]
         verbose_name = "Notification"
         verbose_name_plural = "Notifications"
-        # Empêche d'envoyer deux fois le même rappel (même utilisateur,
-        # même échéance, même palier) si la tâche est relancée.
-        unique_together = [("utilisateur", "echeance", "palier")]
-        indexes = [models.Index(fields=["utilisateur", "lue"])]
+
+        unique_together = [
+            ("utilisateur", "echeance", "palier")
+        ]
+
+        indexes = [
+            models.Index(
+                fields=["utilisateur", "lue"]
+            )
+        ]
 
     def __str__(self):
         return f"{self.utilisateur} — {self.titre}"

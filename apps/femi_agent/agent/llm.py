@@ -33,11 +33,15 @@ def get_llm(
     timeout: float = 30.0,
     max_retries: int = 2,
     num_ctx: Optional[int] = None,
+    provider: Optional[str] = None,
 ):
     """
     Factory sécurisée et mise en cache pour instancier le LLM.
 
-    Provider choisi via settings.FEMI_LLM_PROVIDER.
+    Provider choisi via settings.FEMI_LLM_PROVIDER, sauf si l'appelant
+    force explicitement un provider différent via l'argument `provider`
+    (utilisé par StructuredLLMExecutor pour isoler la vision — ex. OCR
+    en Gemini — du provider texte global, sans changer FEMI_LLM_PROVIDER).
 
     Providers supportés :
         - ollama
@@ -70,10 +74,13 @@ def get_llm(
             f"temperature doit être entre 0.0 et 1.0, reçu: {temperature}"
         )
 
-    provider = getattr(
-        settings,
-        "FEMI_LLM_PROVIDER",
-        "ollama",
+    provider = (
+        provider
+        or getattr(
+            settings,
+            "FEMI_LLM_PROVIDER",
+            "ollama",
+        )
     ).lower()
 
     if provider == "groq":

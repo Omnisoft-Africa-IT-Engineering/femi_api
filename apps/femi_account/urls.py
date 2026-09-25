@@ -19,7 +19,7 @@ urlpatterns = [
     # Authentification classique & OAuth
     path('public/signup/', RegisterView.as_view(), name='public-signup'),
     path('public/login/', PublicLoginView.as_view(), name='public-login'),
-   # path('public/google-login/', GoogleLoginView.as_view(), name='public-google-login'),
+    path('public/google-login/', GoogleLoginView.as_view(), name='public-google-login'),
 
     # KPI dynamiques
     path('kpi/', KpiView.as_view(), name='kpi'),
