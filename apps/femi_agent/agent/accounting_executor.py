@@ -74,6 +74,36 @@ restant). Sinon, applique les règles habituelles ci-dessous.
 """
 
 
+_DOCUMENT_PAIEMENT_RULE = """==================================================
+STATUT DE PAIEMENT D'UN DOCUMENT (PRIORITAIRE)
+==================================================
+
+Le texte à analyser provient d'un DOCUMENT envoyé en photo ou en fichier
+(et non d'une simple phrase dictée). Pour chaque opération issue de ce
+document, détermine le statut de paiement ainsi :
+
+1. Ticket de caisse, reçu de paiement, ticket de terminal de paiement :
+   payé par nature → statut_paiement = PAYE. Ne pose AUCUNE question.
+
+2. Facture, bon de commande, devis, bon de livraison ou tout autre
+   document commercial :
+   a. paiement indiqué comme effectué ("payé", "acquitté", "réglé",
+      "payé par MoMo / espèces / virement / chèque", cachet PAYÉ)
+      → statut_paiement = PAYE.
+   b. crédit ou solde indiqué ("à crédit", "reste à payer", "solde dû",
+      "non réglé", "échéance", acompte avec solde restant)
+      → statut_paiement = CREDIT.
+   c. AUCUNE mention de paiement → ne devine JAMAIS :
+      needs_clarification = true et missing_fields contient
+      "statut_paiement" (en plus des autres champs manquants éventuels).
+      Renseigne quand même tous les autres champs que tu as pu extraire.
+
+3. Ce que l'utilisateur écrit explicitement dans son message ("c'est payé",
+   "à crédit") prime toujours sur le document.
+
+"""
+
+
 def _build_entreprise_context(nom_entreprise: str | None) -> str:
     nom = (nom_entreprise or "").strip() or "(nom non renseigné)"
     return _ENTREPRISE_CONTEXT_TEMPLATE.replace("__NOM_ENTREPRISE__", nom)
@@ -93,7 +123,11 @@ class AccountingExecutor:
     """
 
     @staticmethod
-    def _build_prompt_text(categories_disponibles: str, nom_entreprise: str | None = None) -> str:
+    def _build_prompt_text(
+        categories_disponibles: str,
+        nom_entreprise: str | None = None,
+        from_document: bool = False,
+    ) -> str:
         """Injecte les variables d'ACCOUNTING_PROMPT dans le texte brut du prompt.
 
         Le bloc CONTEXTE ENTREPRISE (nom + règles de sens des documents) est
@@ -102,7 +136,8 @@ class AccountingExecutor:
         qui casserait sur un nouveau placeholder.
         """
         base = ACCOUNTING_PROMPT.replace("{categories_disponibles}", categories_disponibles)
-        return _build_entreprise_context(nom_entreprise) + base
+        document_rule = _DOCUMENT_PAIEMENT_RULE if from_document else ""
+        return _build_entreprise_context(nom_entreprise) + document_rule + base
 
     @classmethod
     def execute(
@@ -110,6 +145,7 @@ class AccountingExecutor:
         message_text: str,
         entreprise,
         categories_disponibles: str | None = None,
+        from_document: bool = False,
     ) -> AccountingExtractionResult:
         """Exécution synchrone de l'agent ACCOUNTING.
 
@@ -118,6 +154,8 @@ class AccountingExecutor:
             entreprise: Instance Entreprise du tenant (utilisée pour résoudre les catégories réelles).
             categories_disponibles: Liste des catégories du tenant, déjà formatée en texte.
                 Optionnel — si absent, résolu dynamiquement via get_categories_disponibles(entreprise).
+            from_document: True si le texte provient d'une photo/fichier (OCR). Active la
+                règle de clarification du statut de paiement pour les factures sans mention.
 
         Returns:
             AccountingExtractionResult (schéma interne, amount_ttc en Decimal).
@@ -125,6 +163,7 @@ class AccountingExecutor:
         prompt_text = cls._build_prompt_text(
             categories_disponibles or get_categories_disponibles(entreprise) or DEFAULT_CATEGORIES,
             getattr(entreprise, "nom", None),
+            from_document,
         )
         llm_result: AccountingExtractionLLMResult = StructuredLLMExecutor.execute(
             prompt_text=prompt_text,
@@ -142,11 +181,13 @@ class AccountingExecutor:
         message_text: str,
         entreprise,
         categories_disponibles: str | None = None,
+        from_document: bool = False,
     ) -> AccountingExtractionResult:
         """Exécution asynchrone de l'agent ACCOUNTING (mêmes arguments que execute())."""
         prompt_text = cls._build_prompt_text(
             categories_disponibles or get_categories_disponibles(entreprise) or DEFAULT_CATEGORIES,
             getattr(entreprise, "nom", None),
+            from_document,
         )
         llm_result: AccountingExtractionLLMResult = await StructuredLLMExecutor.aexecute(
             prompt_text=prompt_text,

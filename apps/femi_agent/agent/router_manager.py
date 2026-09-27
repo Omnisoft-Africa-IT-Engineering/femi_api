@@ -929,6 +929,7 @@ class FemiRouterManager:
         cls,
         intent: RouterIntent,
         entreprise: Entreprise,
+        from_document: bool = False,
     ) -> Tuple[DispatchResult, bool]:
 
         logger.info(
@@ -943,6 +944,7 @@ class FemiRouterManager:
             result = AccountingExecutor.execute(
                 intent.raw_segment,
                 entreprise,
+                from_document=from_document,
             )
 
             logger.info(
@@ -1033,6 +1035,7 @@ class FemiRouterManager:
         cls,
         intent: RouterIntent,
         entreprise: Entreprise,
+        from_document: bool = False,
     ) -> Tuple[DispatchResult, bool]:
 
         if intent.agent == "ACCOUNTING":
@@ -1040,6 +1043,7 @@ class FemiRouterManager:
             result = await AccountingExecutor.aexecute(
                 intent.raw_segment,
                 entreprise,
+                from_document=from_document,
             )
 
             return (
@@ -1469,6 +1473,7 @@ class FemiRouterManager:
                     cls._dispatch_intent(
                         intent,
                         entreprise,
+                        from_document=bool(image_bytes),
                     )
                 )
 
@@ -2170,6 +2175,7 @@ class FemiRouterManager:
                 await cls._adispatch_intent(
                     intent,
                     entreprise,
+                    from_document=bool(image_bytes),
                 )
             )
 
