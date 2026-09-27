@@ -32,6 +32,53 @@ ACCOUNTING_NUM_CTX = 8192
 DEFAULT_CATEGORIES = "(catégories non disponibles)"
 
 
+# Contexte entreprise + règles de sens pour les DOCUMENTS (factures, reçus,
+# tickets) issus de l'OCR. Sans le nom de l'entreprise, le modèle ne peut pas
+# savoir si un document est une vente (l'entreprise est l'émetteur) ou un
+# achat (l'entreprise est le client) : il devinait. Placé en tête du prompt.
+# Aucune accolade dans ce texte : le nom est injecté par .replace().
+_ENTREPRISE_CONTEXT_TEMPLATE = """==================================================
+CONTEXTE ENTREPRISE ET SENS DES DOCUMENTS (PRIORITAIRE)
+==================================================
+
+L'entreprise de l'utilisateur s'appelle : __NOM_ENTREPRISE__
+
+Lorsque le texte provient d'un document (facture, reçu, ticket de caisse,
+bon de commande) et que l'utilisateur n'a pas précisé le sens de
+l'opération, détermine-le ainsi :
+
+1. Si __NOM_ENTREPRISE__ (ou une variante évidente de ce nom) apparaît comme
+   émetteur, vendeur ou en-tête du document
+   → l'entreprise a VENDU : transaction_type = RECETTE.
+
+2. Si __NOM_ENTREPRISE__ apparaît comme client, destinataire, "facturé à",
+   "doit" ou "client :"
+   → l'entreprise a ACHETÉ : transaction_type = DEPENSE.
+
+3. Un ticket de caisse ou un reçu émis par un commerçant tiers, sans aucune
+   mention de __NOM_ENTREPRISE__, est un achat : transaction_type = DEPENSE.
+
+4. Si le nom de l'entreprise n'apparaît nulle part ET que le document ne
+   permet pas de savoir qui vend et qui achète
+   → needs_clarification = true, missing_fields contient
+   "transaction_type". Ne devine JAMAIS le sens.
+
+5. Ce que l'utilisateur écrit explicitement dans son message ("j'ai vendu",
+   "j'ai acheté") prime toujours sur ces règles.
+
+Statut de paiement d'un document : statut_paiement = CREDIT uniquement si
+le document ou le message l'indique explicitement (ex : "à crédit",
+"reste à payer", "solde dû", "non réglé", "échéance", acompte avec solde
+restant). Sinon, applique les règles habituelles ci-dessous.
+
+"""
+
+
+def _build_entreprise_context(nom_entreprise: str | None) -> str:
+    nom = (nom_entreprise or "").strip() or "(nom non renseigné)"
+    return _ENTREPRISE_CONTEXT_TEMPLATE.replace("__NOM_ENTREPRISE__", nom)
+
+
 class AccountingExecutionError(BaseAgentExecutionError):
     """Exception personnalisée encapsulant les échecs d'exécution de l'agent ACCOUNTING."""
     pass
@@ -46,9 +93,16 @@ class AccountingExecutor:
     """
 
     @staticmethod
-    def _build_prompt_text(categories_disponibles: str) -> str:
-        """Injecte les variables d'ACCOUNTING_PROMPT dans le texte brut du prompt."""
-        return ACCOUNTING_PROMPT.replace("{categories_disponibles}", categories_disponibles)
+    def _build_prompt_text(categories_disponibles: str, nom_entreprise: str | None = None) -> str:
+        """Injecte les variables d'ACCOUNTING_PROMPT dans le texte brut du prompt.
+
+        Le bloc CONTEXTE ENTREPRISE (nom + règles de sens des documents) est
+        ajouté ici, à l'exécution, et non dans ACCOUNTING_PROMPT lui-même :
+        l'ancien pipeline (executor.py) charge ce prompt via PromptTemplate,
+        qui casserait sur un nouveau placeholder.
+        """
+        base = ACCOUNTING_PROMPT.replace("{categories_disponibles}", categories_disponibles)
+        return _build_entreprise_context(nom_entreprise) + base
 
     @classmethod
     def execute(
@@ -68,7 +122,10 @@ class AccountingExecutor:
         Returns:
             AccountingExtractionResult (schéma interne, amount_ttc en Decimal).
         """
-        prompt_text = cls._build_prompt_text(categories_disponibles or get_categories_disponibles(entreprise) or DEFAULT_CATEGORIES)
+        prompt_text = cls._build_prompt_text(
+            categories_disponibles or get_categories_disponibles(entreprise) or DEFAULT_CATEGORIES,
+            getattr(entreprise, "nom", None),
+        )
         llm_result: AccountingExtractionLLMResult = StructuredLLMExecutor.execute(
             prompt_text=prompt_text,
             message_text=message_text,
@@ -87,7 +144,10 @@ class AccountingExecutor:
         categories_disponibles: str | None = None,
     ) -> AccountingExtractionResult:
         """Exécution asynchrone de l'agent ACCOUNTING (mêmes arguments que execute())."""
-        prompt_text = cls._build_prompt_text(categories_disponibles or get_categories_disponibles(entreprise) or DEFAULT_CATEGORIES)
+        prompt_text = cls._build_prompt_text(
+            categories_disponibles or get_categories_disponibles(entreprise) or DEFAULT_CATEGORIES,
+            getattr(entreprise, "nom", None),
+        )
         llm_result: AccountingExtractionLLMResult = await StructuredLLMExecutor.aexecute(
             prompt_text=prompt_text,
             message_text=message_text,

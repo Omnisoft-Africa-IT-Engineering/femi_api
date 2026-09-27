@@ -83,7 +83,24 @@ class CustomerExecutor:
         tool_loop_executor.py)."""
 
         def _open_debts_by_name(contact: str | None = None):
-            return get_contact_open_debts(entreprise, resolve_contact_for_read(entreprise, contact))
+            # FIX : lorsqu'un nom de contact est fourni mais ne se résout à
+            # aucune (ou plusieurs) instance Contact, resolve_contact_for_read
+            # renvoie None. Avant ce correctif, ce None était transmis tel
+            # quel à get_contact_open_debts, qui le traite comme "aucun
+            # contact précisé" et renvoie un résultat VALIDE à zéro
+            # ({"total_du": 0.0, "has_open_debt": False}, sans clé
+            # "success") — indiscernable pour le LLM d'un vrai "ce client
+            # n'a aucune créance", en violation directe de la règle de la
+            # section 9 du prompt (CUSTOMER_PROMPT) qui interdit de conclure
+            # à l'absence de créance hors d'un succès explicite. On
+            # distingue donc explicitement l'échec de résolution, exactement
+            # comme le fait déjà _contact_info_by_name juste en dessous.
+            if contact is None:
+                return get_contact_open_debts(entreprise, None)
+            resolved = resolve_contact_for_read(entreprise, contact)
+            if resolved is None:
+                return {"success": False, "error": "contact introuvable"}
+            return get_contact_open_debts(entreprise, resolved)
 
         def _contact_info_by_name(contact: str | None = None):
             resolved = resolve_contact_for_read(entreprise, contact)
