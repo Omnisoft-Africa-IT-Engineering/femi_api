@@ -1159,7 +1159,19 @@ class FemiRouterManager:
             montant = cls._format_montant(txn.amount_ttc, txn.currency)
             extra = f" ({txn.category})" if txn.category else ""
             contact = f" — {txn.contact}" if txn.contact else ""
-            lines.append(f"✅ {label} de {montant}{extra}{contact} enregistrée.")
+            statut = getattr(txn, "statut_paiement", "PAYE")
+            if statut == "CREDIT" and txn.transaction_type == "RECETTE":
+                lines.append(
+                    f"✅ Vente à crédit de {montant}{extra}{contact} enregistrée.\n"
+                    f"Créance client : {montant} restent à encaisser."
+                )
+            elif statut == "CREDIT" and txn.transaction_type == "DEPENSE":
+                lines.append(
+                    f"✅ Achat à crédit de {montant}{extra}{contact} enregistré.\n"
+                    f"Dette fournisseur : {montant} restent à payer."
+                )
+            else:
+                lines.append(f"✅ {label} de {montant}{extra}{contact} enregistrée.")
         return lines
 
     @classmethod
@@ -1186,6 +1198,71 @@ class FemiRouterManager:
             return "Je n'ai trouvé aucune opération correspondante."
         candidats = "\n".join(f"- {c.summary}" for c in result.candidates)
         return f"Plusieurs opérations correspondent, laquelle veux-tu modifier/supprimer ?\n{candidats}"
+
+    # ------------------------------------------------------------
+    # QUESTIONS DE CLARIFICATION (codes missing_fields → français clair)
+    # ------------------------------------------------------------
+    # Les codes viennent des prompts (ROUTER, ACCOUNTING, ACCOUNTING_MODIFY,
+    # CUSTOMER, FINANCIAL_ANALYST). L'utilisateur ne doit JAMAIS voir un nom
+    # de champ technique. Ordre = priorité : ce qui bloque l'enregistrement
+    # d'abord. Texte fixe (pas de LLM) : réponse identique et fiable pour
+    # une application comptable.
+    _MISSING_FIELD_QUESTIONS = {
+        "transaction_type": "C'est une vente, un achat, un prêt accordé ou un prêt reçu ?",
+        "amount_ttc": "Quel est le montant de l'opération ?",
+        "nature_creance": "S'agit-il du remboursement d'une dette de vente, ou d'un prêt que tu avais accordé ?",
+        "statut_paiement": "Est-ce déjà payé, ou à crédit ?",
+        "contact_disambiguation": "J'ai plusieurs contacts qui correspondent à ce nom. Peux-tu préciser lequel (nom complet) ?",
+        "target_data": "Quelle opération veux-tu modifier ou supprimer ? Donne-moi le montant, la date ou le nom du contact.",
+        "search_criteria": "Quelle opération cherches-tu ? Donne-moi le montant, la date ou le nom du contact.",
+        "operation_not_found": "Je ne retrouve pas cette opération. Peux-tu donner le montant, la date ou le nom du contact ?",
+        "new_value": "Quelle est la nouvelle valeur à enregistrer ?",
+        "category_not_available": "Cette catégorie n'existe pas dans ton compte. Peux-tu en choisir une existante ?",
+        "payment_method_invalid": "Quel est le mode de paiement : espèces, mobile money, virement, chèque ou carte ?",
+        "transaction_type_reclassification_not_supported": (
+            "Je ne peux pas changer le type d'une opération déjà enregistrée. "
+            "Annule-la puis enregistre-la de nouveau avec le bon type."
+        ),
+        "indicator": "Quel indicateur veux-tu : chiffre d'affaires, dépenses, bénéfice, marge ou trésorerie ?",
+        "indicateur": "Quel indicateur veux-tu : chiffre d'affaires, dépenses, bénéfice, marge ou trésorerie ?",
+        "date_range_incomplete": "Pour quelle période exactement ? (ex : ce mois-ci, septembre, du 1er au 15)",
+        "annee": "Pour quelle année ?",
+        "wrong_agent": "Peux-tu reformuler ta demande en précisant ce que tu veux faire ?",
+        "search_error": "Je n'ai pas réussi à retrouver cette information. Peux-tu reformuler ?",
+    }
+
+    # Codes déjà rendus ailleurs (liste de candidats) ou propres à un autre
+    # message : jamais transformés en question ici.
+    _CLARIFICATION_SKIP_CODES = {"fonctionnalite_non_disponible", "operation_disambiguation"}
+
+    @classmethod
+    def _build_clarification_message(cls, missing_fields: list[str]) -> str | None:
+        """Question(s) en français à partir des codes missing_fields.
+
+        Retourne None s'il n'y a rien à demander. Un code inconnu ne produit
+        jamais son nom technique : il est remplacé par une demande générique.
+        """
+        questions: list[str] = []
+        has_unknown = False
+        for code in missing_fields:
+            if code in cls._CLARIFICATION_SKIP_CODES:
+                continue
+            question = cls._MISSING_FIELD_QUESTIONS.get(code)
+            if question is None:
+                has_unknown = True
+            elif question not in questions:
+                questions.append(question)
+
+        if not questions and not has_unknown:
+            return None
+        if not questions:
+            return "Il me manque une précision pour continuer. Peux-tu compléter ta demande ?"
+
+        questions = questions[:3]
+        if len(questions) == 1:
+            return f"Il me manque une précision : {questions[0]}"
+        liste = "\n".join(f"{i}. {q}" for i, q in enumerate(questions, start=1))
+        return f"Il me manque quelques précisions :\n{liste}"
 
     @classmethod
     def _build_final_message(
@@ -1226,6 +1303,12 @@ class FemiRouterManager:
                 lines.append(cls._summarize_candidates(result))
 
         if lines:
+            # Une opération du lot peut être enregistrée pendant qu'une autre
+            # attend une précision : ne pas perdre la question.
+            if needs_clarification:
+                clarification = cls._build_clarification_message(missing_fields)
+                if clarification:
+                    lines.append(clarification)
             return "\n\n".join(lines)
 
         # 5. Rien de concret à annoncer : soit une clarification est
@@ -1242,12 +1325,9 @@ class FemiRouterManager:
                     "• Tes créances clients et qui relancer ;\n"
                     "• Enregistrer, modifier ou supprimer une transaction."
                 )
-            if missing_fields:
-                champs = ", ".join(missing_fields)
-                return (
-                    "Il me manque quelques informations pour continuer : "
-                    f"{champs}. Peux-tu préciser ?"
-                )
+            clarification = cls._build_clarification_message(missing_fields)
+            if clarification:
+                return clarification
             return "Je n'ai pas toutes les informations nécessaires. Peux-tu préciser ta demande ?"
 
         return (
