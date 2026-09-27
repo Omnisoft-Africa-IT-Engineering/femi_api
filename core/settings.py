@@ -286,20 +286,25 @@ GEMINI_API_KEY = config(
     default=None
 )
 
-# Moteur de transcription audio (STT). "whisper" (défaut, comportement
-# actuel, local) ou "parakeet" (NVIDIA Parakeet TDT 0.6B v3, local
-# aussi, via ONNX Runtime — CPU, multilingue dont le français).
-# Indépendant de FEMI_LLM_PROVIDER / FEMI_VISION_PROVIDER : ne concerne
-# que la transcription brute, avant STT_PROMPT (stt_executor.py,
-# inchangé quel que soit le moteur choisi ici).
-FEMI_STT_ENGINE = config(
-    "FEMI_STT_ENGINE",
-    default="whisper"
+# Moteur de transcription audio (STT) : API ElevenLabs (Scribe v2).
+# Remplace les anciens moteurs locaux Whisper/Parakeet (FEMI_STT_ENGINE,
+# FEMI_PARAKEET_MODEL) : plus de modèle à télécharger ni à charger en
+# mémoire côté serveur, la transcription se fait via un appel HTTP.
+FEMI_ELEVENLABS_API_KEY = config(
+    "FEMI_ELEVENLABS_API_KEY",
+    default=None
 )
 
-FEMI_PARAKEET_MODEL = config(
-    "FEMI_PARAKEET_MODEL",
-    default="nemo-parakeet-tdt-0.6b-v3"
+FEMI_ELEVENLABS_MODEL = config(
+    "FEMI_ELEVENLABS_MODEL",
+    default="scribe_v2"
+)
+
+# None = détection automatique de la langue par l'API (utile si les
+# utilisateurs parlent parfois une langue locale plutôt que le français).
+FEMI_STT_LANGUAGE_CODE = config(
+    "FEMI_STT_LANGUAGE_CODE",
+    default=None
 )
 
 OLLAMA_BASE_URL = config(

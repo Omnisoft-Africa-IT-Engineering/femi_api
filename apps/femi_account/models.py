@@ -161,6 +161,8 @@ class Operation(models.Model):
         )
     )
 
+    created_at = models.DateTimeField(auto_now_add=True)
+
     class Meta:
         verbose_name = "Opération"
         verbose_name_plural = "Opérations"

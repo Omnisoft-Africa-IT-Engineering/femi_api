@@ -143,3 +143,4 @@ psycopg2-binary>=2.9.9
 langchain-mistralai
 langchain-google-genai
 onnx-asr[cpu,hub]
+elevenlabs==2.69.0

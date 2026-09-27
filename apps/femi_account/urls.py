@@ -8,6 +8,7 @@ from .views import (
     GoogleLoginView,
     EcheanceFiscaleViewSet,  # <--- Importé depuis views.py
 )
+from .kpi_views import KpiView
 
 from . import views_notifications as vn
 
@@ -19,6 +20,9 @@ urlpatterns = [
     path('public/signup/', RegisterView.as_view(), name='public-signup'),
     path('public/login/', PublicLoginView.as_view(), name='public-login'),
     path('public/google-login/', GoogleLoginView.as_view(), name='public-google-login'),
+
+    # KPI dynamiques
+    path('kpi/', KpiView.as_view(), name='kpi'),
 
     # Endpoints Notifications (centre de notifications + appareils FCM)
     path('notifications/', vn.liste_notifications, name='notifications-liste'),

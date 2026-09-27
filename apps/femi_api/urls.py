@@ -1,5 +1,6 @@
 from django.urls import path
 from apps.femi_api.views import (
+    TranscrireAudioAPIView,
     ProcessTransactionAPIView,
     DashboardKPIAPIView,
     BatchTransactionAPIView,
@@ -41,4 +42,5 @@ urlpatterns = [
     path('auth/deactivate/', DeactivateAccountAPIView.as_view(), name='api_auth_deactivate'),
     path('auth/link-whatsapp/request/', LinkWhatsAppRequestAPIView.as_view(), name='api_link_whatsapp_request'),
     path('auth/link-whatsapp/confirm/', LinkWhatsAppConfirmAPIView.as_view(), name='api_link_whatsapp_confirm'),
+    path('transcrire-audio/', TranscrireAudioAPIView.as_view(), name='api_transcrire_audio'),
 ]

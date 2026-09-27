@@ -47,4 +47,8 @@ urlpatterns = [
 
     path('internal/cron/rappels-echeances/', views_cron.cron_rappels_echeances, name='cron-rappels-echeances'),
     path('internal/cron/generer-echeances/', views_cron.cron_generer_echeances, name='cron-generer-echeances'),
+
+
+    
+
 ]
