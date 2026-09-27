@@ -16,6 +16,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.femi_agent.agent.router_manager import FemiRouterManager
+from apps.femi_agent.parsers.audio_parser import transcribe_audio
+
 # Importations DRF-Spectacular pour Swagger OAS 3.0
 try:
     from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema
@@ -2130,3 +2133,51 @@ class ConfigAPIView(APIView):
             },
             status=status.HTTP_200_OK
         )
+
+
+
+    
+
+class TranscrireAudioAPIView(APIView):
+    """
+    ENDPOINT TRANSCRIPTION AUDIO (POST)
+    Reçoit un fichier audio et renvoie le texte transcrit.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        fichier_audio = request.FILES.get("audio")
+
+        if not fichier_audio:
+            return Response(
+                {
+                    "success": False,
+                    "message": "Aucun fichier audio reçu. Envoie le fichier sous la clé 'audio'.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            audio_bytes = fichier_audio.read()
+            texte = transcribe_audio(audio_bytes)
+
+            return Response(
+                {
+                    "success": True,
+                    "transcription": texte,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        except Exception as exc:
+            logging.getLogger(__name__).exception("[TranscrireAudioAPIView] Erreur transcription")
+
+            return Response(
+                {
+                    "success": False,
+                    "message": "Une erreur technique est survenue lors de la transcription.",
+                    "detail": str(exc),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

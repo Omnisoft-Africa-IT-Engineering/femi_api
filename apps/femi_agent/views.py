@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 
-from apps.femi_agent.agent.router_manager import FemiRouterManager
+
 
 logger = logging.getLogger(__name__)
 
@@ -70,3 +70,4 @@ class AgentChatAPIView(APIView):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
