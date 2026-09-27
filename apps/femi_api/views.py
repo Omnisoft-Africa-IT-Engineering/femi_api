@@ -7,7 +7,7 @@ from django.contrib.auth import authenticate
 from django.db import connection, transaction
 from django.db.models import Avg, Q, Sum
 from django.db.models.functions import Coalesce
-from django.http import HttpResponse as DjangoHttpResponse
+from django.http import HttpResponse as DjangoHttpResponse, request
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.authtoken.models import Token
@@ -458,6 +458,13 @@ class RegistreJournalierAPIView(APIView):
         date_debut = request.query_params.get('date_debut')
         date_fin = request.query_params.get('date_fin')
 
+        # Nouveaux paramètres : filtrent sur la date de SAISIE (created_at),
+        # indépendamment de date_debut/date_fin qui filtrent sur la date
+        # COMPTABLE (transaction_date). Permet à l'app mobile d'afficher
+        # "ce qui a été scanné aujourd'hui" sans dépendre de la date du document.
+        saisie_debut = request.query_params.get('saisie_debut')
+        saisie_fin = request.query_params.get('saisie_fin')
+
         queryset = Operation.objects.filter(
             entreprise=entreprise
         )
@@ -470,6 +477,16 @@ class RegistreJournalierAPIView(APIView):
         if date_fin:
             queryset = queryset.filter(
                 transaction_date__lte=date_fin
+            )
+
+        if saisie_debut:
+            queryset = queryset.filter(
+                created_at__date__gte=saisie_debut
+            )
+
+        if saisie_fin:
+            queryset = queryset.filter(
+                created_at__date__lte=saisie_fin
             )
 
         queryset = queryset.order_by('-transaction_date')
@@ -559,10 +576,16 @@ class RegistreJournalierAPIView(APIView):
                     else ""
                 ),
 
+                # Date/heure de SAISIE (scan), distincte de la date comptable
+                "date_saisie": (
+                    op.created_at.date().isoformat()
+                    if op.created_at
+                    else ""
+                ),
+
                 "heure": (
                     op.created_at.strftime("%H:%M")
-                    if hasattr(op, "created_at")
-                    and op.created_at
+                    if op.created_at
                     else ""
                 ),
 
