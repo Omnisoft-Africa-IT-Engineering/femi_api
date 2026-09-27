@@ -54,6 +54,12 @@ from apps.femi_agent.agent.conversation_manager import (
     resolve_type_message,
 )
 from apps.femi_agent.constants import GREETING_PATTERN
+from apps.femi_agent.agent.social_replies import (
+    build_off_topic_reply,
+    build_social_reply,
+    classify_social_message,
+)
+from django.utils import timezone
 
 from apps.femi_account.integrations.supabase_storage import upload_file
 
@@ -176,7 +182,7 @@ class FemiRouterManager:
                 and not audio_bytes
                 and cls._is_pure_greeting(message_text.strip())
             ):
-                greeting_result = cls._greeting_result()
+                greeting_result = cls._greeting_result(message_text.strip())
 
                 await cls._arecord_turn(
                     conversation,
@@ -359,7 +365,7 @@ class FemiRouterManager:
                 and not audio_bytes
                 and cls._is_pure_greeting(message_text.strip())
             ):
-                greeting_result = cls._greeting_result()
+                greeting_result = cls._greeting_result(message_text.strip())
 
                 cls._record_turn(
                     conversation,
@@ -1105,22 +1111,17 @@ class FemiRouterManager:
 
     @classmethod
     def _is_pure_greeting(cls, text: str) -> bool:
-        """Même règle que FemiAgentManager._is_pure_greeting (ancien
-        pipeline) : au plus 3 mots, dont le début matche GREETING_PATTERN.
-        Reprise à l'identique pour un comportement cohérent entre les deux
-        pipelines."""
-        words = text.split()
-        return len(words) <= 3 and bool(GREETING_PATTERN.search(text))
+        """Message purement social (salutation, merci, au revoir, « qui
+        es-tu ? »). Vocabulaire fermé et aucun chiffre : voir
+        social_replies.py. Le nom est conservé pour les appelants."""
+        return classify_social_message(text) is not None
 
     @staticmethod
-    def _greeting_result() -> RouterProcessResult:
+    def _greeting_result(text: str = "") -> RouterProcessResult:
+        hour = timezone.localtime().hour
         return RouterProcessResult(
             success=True,
-            message=(
-                "👋 *Bonjour !* Je suis Femi, ton assistant financier.\n\n"
-                "• Envoie-moi une transaction (ex: *Vente de 2 sacs à 15000 FCFA*).\n"
-                "• Ou pose-moi une question (ex: *Combien j'ai vendu aujourd'hui ?*)."
-            ),
+            message=build_social_reply(text, hour),
         )
 
     # ============================================================
@@ -1330,11 +1331,7 @@ class FemiRouterManager:
                 return clarification
             return "Je n'ai pas toutes les informations nécessaires. Peux-tu préciser ta demande ?"
 
-        return (
-            "Je n'ai pas compris ta demande 🙂 Je peux t'aider à enregistrer une "
-            "transaction, répondre à une question sur tes finances, ou gérer tes "
-            "clients et fournisseurs — n'hésite pas à reformuler."
-        )
+        return build_off_topic_reply()
 
     # ============================================================
     # CONSTRUCTION RESULTAT SYNCHRONE
