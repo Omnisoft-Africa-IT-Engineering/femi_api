@@ -7,7 +7,7 @@ from django.contrib.auth import authenticate
 from django.db import connection, transaction
 from django.db.models import Avg, Q, Sum
 from django.db.models.functions import Coalesce
-from django.http import HttpResponse as DjangoHttpResponse, request
+from django.http import HttpResponse as DjangoHttpResponse
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.authtoken.models import Token
@@ -36,9 +36,6 @@ from apps.femi_api.serializers import (
 from apps.femi_whatsapp.tasks import _normalize_phone
 from apps.femi_whatsapp.whatsapp_client import WhatsAppClient
 
-
-from apps.femi_agent.agent.router_manager import FemiRouterManager
-# (Vous pourrez retirer l'import de FemiAgentManager si celui-ci n'est plus utilisé ailleurs)
 
 class ProcessTransactionAPIView(APIView):
     """
@@ -861,19 +858,18 @@ class BatchTransactionAPIView(APIView):
 
         results = []
 
+        entreprise_id = getattr(request.user, "entreprise_id", None)
+        utilisateur_id = str(request.user.id)
+
         for item in serializer.validated_data['transactions']:
             client_ref = item.get('client_ref', '')
 
             try:
-                result = FemiAgentManager.process_transaction_text(
-                    text_input=item['text'],
+                result = FemiRouterManager.route_message(
+                    message_text=item['text'],
+                    entreprise_id=entreprise_id,
+                    utilisateur_id=utilisateur_id,
                     source=item.get('source', 'MOBILE'),
-                    entreprise_id=(
-                        request.user.entreprise.id
-                        if request.user.entreprise
-                        else None
-                    ),
-                    utilisateur_id=request.user.id
                 )
 
                 if not result.success:
@@ -884,18 +880,37 @@ class BatchTransactionAPIView(APIView):
                     })
                     continue
 
-                if result.operation_instance is None:
+                if result.needs_clarification:
+                    results.append({
+                        "client_ref": client_ref,
+                        "status": "needs_clarification",
+                        "message": result.message,
+                        "missing_fields": result.missing_fields
+                    })
+                    continue
+
+                if not result.operation_ids:
                     results.append({
                         "client_ref": client_ref,
                         "status": "processed_no_save",
                         "message": result.message
                     })
-                else:
-                    results.append({
-                        "client_ref": client_ref,
-                        "status": "created",
-                        "operation": OperationModelSerializer(result.operation_instance).data
-                    })
+                    continue
+
+                operations = list(
+                    Operation.objects.filter(
+                        id__in=result.operation_ids,
+                        entreprise_id=entreprise_id,
+                    )
+                )
+                operations_data = OperationModelSerializer(operations, many=True).data
+                results.append({
+                    "client_ref": client_ref,
+                    "status": "created",
+                    "message": result.message,
+                    "operation": operations_data[0] if operations_data else None,
+                    "operations": operations_data,
+                })
 
             except Exception as e:
                 results.append({

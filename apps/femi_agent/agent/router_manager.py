@@ -42,7 +42,6 @@ from apps.femi_agent.agent.accounting_modify_executor import (
     AccountingModifyExecutor,
 )
 
-from apps.femi_agent.agent.manager import FemiAgentManager
 from apps.femi_agent.agent.accounting_manager import (
     save_accounting_transactions,
 )
@@ -53,7 +52,6 @@ from apps.femi_agent.agent.conversation_manager import (
     record_message,
     resolve_type_message,
 )
-from apps.femi_agent.constants import GREETING_PATTERN
 from apps.femi_agent.agent.social_replies import (
     build_off_topic_reply,
     build_social_reply,
@@ -771,11 +769,7 @@ class FemiRouterManager:
         utilisateur_id: Optional[str],
     ) -> Tuple[Entreprise, Utilisateur]:
 
-        entreprise = (
-            FemiAgentManager._get_entreprise(
-                entreprise_id
-            )
-        )
+        entreprise = cls._get_entreprise(entreprise_id)
 
         utilisateur = (
             cls._get_utilisateur_stricte(
@@ -784,6 +778,13 @@ class FemiRouterManager:
         )
 
         return entreprise, utilisateur
+
+    @staticmethod
+    def _get_entreprise(entreprise_id: Optional[str]) -> Entreprise:
+        """Entreprise du tenant, ou Entreprise.DoesNotExist si absente."""
+        if entreprise_id:
+            return Entreprise.objects.get(id=entreprise_id)
+        raise Entreprise.DoesNotExist("Aucun ID d'entreprise fourni.")
 
     @classmethod
     def _get_utilisateur_stricte(
