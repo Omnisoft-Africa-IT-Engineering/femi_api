@@ -26,6 +26,7 @@ from typing import Optional, Tuple
 from asgiref.sync import sync_to_async
 
 from apps.femi_account.models import (
+    Conversation,
     Entreprise,
     Operation,
     PieceJustificative,
@@ -44,6 +45,13 @@ from apps.femi_agent.agent.accounting_modify_executor import (
 from apps.femi_agent.agent.manager import FemiAgentManager
 from apps.femi_agent.agent.accounting_manager import (
     save_accounting_transactions,
+)
+from apps.femi_agent.agent.conversation_manager import (
+    build_history_text,
+    get_or_create_active_conversation,
+    normalize_canal,
+    record_message,
+    resolve_type_message,
 )
 from apps.femi_agent.constants import GREETING_PATTERN
 
@@ -142,7 +150,24 @@ class FemiRouterManager:
             )
 
             # ----------------------------------------------------
-            # 1bis. Court-circuit salutation (voir route_message)
+            # 1bis. Contexte conversationnel (historique multi-canal,
+            # best-effort — voir conversation_manager.py)
+            # ----------------------------------------------------
+
+            conversation, canal, type_message, history_text = (
+                await sync_to_async(
+                    cls._setup_conversation_context
+                )(
+                    utilisateur,
+                    entreprise,
+                    source,
+                    image_bytes,
+                    audio_bytes,
+                )
+            )
+
+            # ----------------------------------------------------
+            # 1ter. Court-circuit salutation (voir route_message)
             # ----------------------------------------------------
 
             if (
@@ -151,7 +176,17 @@ class FemiRouterManager:
                 and not audio_bytes
                 and cls._is_pure_greeting(message_text.strip())
             ):
-                return cls._greeting_result()
+                greeting_result = cls._greeting_result()
+
+                await cls._arecord_turn(
+                    conversation,
+                    canal,
+                    message_text.strip(),
+                    type_message,
+                    greeting_result.message,
+                )
+
+                return greeting_result
 
             # ----------------------------------------------------
             # 2. Construction du texte final
@@ -168,14 +203,15 @@ class FemiRouterManager:
             # ----------------------------------------------------
 
             router_output = await RouterExecutor.aexecute(
-                combined_text
+                combined_text,
+                history=history_text,
             )
 
             # ----------------------------------------------------
             # 4. Dispatch + persistance
             # ----------------------------------------------------
 
-            return await cls._abuild_result(
+            result = await cls._abuild_result(
                 router_output=router_output,
                 entreprise=entreprise,
                 utilisateur=utilisateur,
@@ -183,6 +219,16 @@ class FemiRouterManager:
                 raw_text=combined_text,
                 image_bytes=image_bytes,
             )
+
+            await cls._arecord_turn(
+                conversation,
+                canal,
+                combined_text,
+                type_message,
+                result.message,
+            )
+
+            return result
 
         except (
             Entreprise.DoesNotExist,
@@ -287,7 +333,22 @@ class FemiRouterManager:
             )
 
             # ----------------------------------------------------
-            # 1bis. Court-circuit salutation (pas d'image/audio,
+            # 1bis. Contexte conversationnel (historique multi-canal,
+            # best-effort — voir conversation_manager.py)
+            # ----------------------------------------------------
+
+            conversation, canal, type_message, history_text = (
+                cls._setup_conversation_context(
+                    utilisateur,
+                    entreprise,
+                    source,
+                    image_bytes,
+                    audio_bytes,
+                )
+            )
+
+            # ----------------------------------------------------
+            # 1ter. Court-circuit salutation (pas d'image/audio,
             # message très court type "Salut Femi") — évite un
             # appel LLM inutile et répond immédiatement.
             # ----------------------------------------------------
@@ -298,7 +359,17 @@ class FemiRouterManager:
                 and not audio_bytes
                 and cls._is_pure_greeting(message_text.strip())
             ):
-                return cls._greeting_result()
+                greeting_result = cls._greeting_result()
+
+                cls._record_turn(
+                    conversation,
+                    canal,
+                    message_text.strip(),
+                    type_message,
+                    greeting_result.message,
+                )
+
+                return greeting_result
 
             # ----------------------------------------------------
             # 2. Texte final
@@ -321,7 +392,8 @@ class FemiRouterManager:
             # ----------------------------------------------------
 
             router_output = RouterExecutor.execute(
-                combined_text
+                combined_text,
+                history=history_text,
             )
 
             logger.info(
@@ -334,7 +406,7 @@ class FemiRouterManager:
             # 4. Dispatch + persistance
             # ----------------------------------------------------
 
-            return cls._build_result(
+            result = cls._build_result(
                 router_output=router_output,
                 entreprise=entreprise,
                 utilisateur=utilisateur,
@@ -342,6 +414,16 @@ class FemiRouterManager:
                 raw_text=combined_text,
                 image_bytes=image_bytes,
             )
+
+            cls._record_turn(
+                conversation,
+                canal,
+                combined_text,
+                type_message,
+                result.message,
+            )
+
+            return result
 
         except (
             Entreprise.DoesNotExist,
@@ -717,6 +799,119 @@ class FemiRouterManager:
         raise Utilisateur.DoesNotExist(
             "Aucun utilisateur résolu pour "
             f"utilisateur_id={utilisateur_id!r}."
+        )
+
+    # ============================================================
+    # CONTEXTE CONVERSATIONNEL (historique multi-canal)
+    # ============================================================
+    #
+    # Best-effort par construction : une panne ici ne doit jamais faire
+    # échouer le traitement principal d'un message (voir
+    # conversation_manager.py). Utilisé par route_message() ET
+    # aroute_message() (ce dernier passe par sync_to_async).
+
+    @classmethod
+    def _setup_conversation_context(
+        cls,
+        utilisateur: Utilisateur,
+        entreprise: Entreprise,
+        source: str,
+        image_bytes: Optional[bytes],
+        audio_bytes: Optional[bytes],
+    ) -> Tuple[
+        Optional[Conversation],
+        str,
+        str,
+        Optional[str],
+    ]:
+        """Résout/crée la Conversation active et l'historique à donner
+        au Router.
+
+        Retourne (conversation, canal, type_message, history_text).
+        `conversation` vaut None en cas d'échec (aucun blocage du flux
+        principal), auquel cas les enregistrements de messages sont
+        simplement ignorés en aval.
+        """
+
+        canal = normalize_canal(source)
+        type_message = resolve_type_message(
+            image_bytes,
+            audio_bytes,
+        )
+
+        try:
+            conversation = get_or_create_active_conversation(
+                utilisateur,
+                entreprise,
+                canal,
+            )
+
+            history_text = build_history_text(conversation)
+
+            return conversation, canal, type_message, history_text
+
+        except Exception:
+
+            logger.exception(
+                "[FemiRouterManager] "
+                "Échec de préparation du contexte conversationnel "
+                "— poursuite sans historique."
+            )
+
+            return None, canal, type_message, None
+
+    @classmethod
+    def _record_turn(
+        cls,
+        conversation: Optional[Conversation],
+        canal: str,
+        user_text: str,
+        user_type_message: str,
+        agent_text: Optional[str],
+    ) -> None:
+        """Enregistre le tour utilisateur + agent dans l'historique
+        (version synchrone). Aucune exception ne remonte au-delà de
+        record_message(), qui est déjà défensif."""
+
+        if conversation is None:
+            return
+
+        record_message(
+            conversation,
+            canal,
+            "USER",
+            user_text,
+            user_type_message,
+        )
+
+        record_message(
+            conversation,
+            canal,
+            "AGENT",
+            agent_text,
+            "TEXTE",
+        )
+
+    @classmethod
+    async def _arecord_turn(
+        cls,
+        conversation: Optional[Conversation],
+        canal: str,
+        user_text: str,
+        user_type_message: str,
+        agent_text: Optional[str],
+    ) -> None:
+        """Équivalent asynchrone de _record_turn()."""
+
+        if conversation is None:
+            return
+
+        await sync_to_async(cls._record_turn)(
+            conversation,
+            canal,
+            user_text,
+            user_type_message,
+            agent_text,
         )
 
     # ============================================================
