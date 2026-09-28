@@ -5,7 +5,7 @@ import logging
 
 from django.contrib.auth import authenticate
 from django.db import connection, transaction
-from django.db.models import Avg, Q, Sum
+from django.db.models import Q, Sum
 from django.db.models.functions import Coalesce
 from django.http import HttpResponse as DjangoHttpResponse
 from django.utils import timezone
@@ -26,8 +26,14 @@ try:
 except ImportError:
     HAS_SPECTACULAR = False
 
-from apps.femi_account.models import Contact, Entreprise, Kpi, Niveau, Operation, PrestationRealisee, Secteur, Utilisateur, WhatsAppLinkRequest
+from apps.femi_account.models import Contact, Entreprise, Kpi, Niveau, Operation, Secteur, Utilisateur, WhatsAppLinkRequest
 from apps.femi_account.services import generer_echeances_otr
+from apps.femi_account.kpi_service import (
+    KPI_CALCULATEURS, KpiContexte, calc_benefice, calc_chiffre_affaires,
+    calc_clients, calc_creances, calc_dettes, calc_depenses, calc_marge,
+    calc_nombre_transactions, calc_panier_moyen, calc_tresorerie,
+    calculer_kpi, resoudre_periode, resoudre_periode_precedente,
+)
 from apps.femi_api.serializers import (
     BatchTransactionPayloadSerializer,
     OperationModelSerializer,
@@ -103,33 +109,16 @@ class DashboardKPIAPIView(APIView):
     """
     2. ENDPOINT KPIS DASHBOARD (GET)
     Fournit l'ensemble des indicateurs financiers du tableau de bord.
+    Tous les calculs viennent de apps.femi_account.kpi_service.
     """
 
     permission_classes = [IsAuthenticated]
 
     @staticmethod
     def _pct_change(current, previous):
-        if previous == Decimal('0.00') or previous == 0:
+        if not previous:
             return 100.0 if current > 0 else 0.0
         return round(float((current - previous) / previous * 100), 2)
-
-    def _get_previous_period_ops(self, entreprise, period, now):
-        ops = Operation.objects.filter(entreprise=entreprise)
-        if period == 'today':
-            yesterday = now.date() - timezone.timedelta(days=1)
-            return ops.filter(transaction_date=yesterday)
-        elif period == 'this_month':
-            month = 12 if now.month == 1 else now.month - 1
-            year = now.year - 1 if now.month == 1 else now.year
-            return ops.filter(transaction_date__year=year, transaction_date__month=month)
-        elif period == 'last_month':
-            # Il y a 2 mois
-            month = 11 if now.month == 1 else (12 if now.month == 2 else now.month - 2)
-            year = now.year - 1 if now.month <= 2 else now.year
-            return ops.filter(transaction_date__year=year, transaction_date__month=month)
-        elif period == 'this_year':
-            return ops.filter(transaction_date__year=now.year - 1)
-        return ops.none()
 
     def get(self, request, *args, **kwargs):
         period = request.query_params.get('period', 'this_month')
@@ -142,69 +131,31 @@ class DashboardKPIAPIView(APIView):
             )
 
         now = timezone.now()
-        ops = Operation.objects.filter(entreprise=entreprise)
 
-        # 1. Filtre dynamique par période
-        if period == 'today':
-            ops = ops.filter(transaction_date=now.date())
-        elif period == 'this_month':
-            ops = ops.filter(
-                transaction_date__year=now.year,
-                transaction_date__month=now.month
-            )
-        elif period == 'last_month':
-            month = 12 if now.month == 1 else now.month - 1
-            year = now.year - 1 if now.month == 1 else now.year
-            ops = ops.filter(
-                transaction_date__year=year,
-                transaction_date__month=month
-            )
-        elif period == 'this_year':
-            ops = ops.filter(transaction_date__year=now.year)
+        # Flux sur la période, soldes (trésorerie, créances, dettes) cumulés
+        debut, fin = resoudre_periode(period)
+        ctx = KpiContexte(entreprise, debut, fin)
 
-        recettes_qs = ops.filter(Q(transaction_type__iexact="RECETTE") | Q(transaction_type__iexact="INCOME"))
-        depenses_qs = ops.filter(Q(transaction_type__iexact="DEPENSE") | Q(transaction_type__iexact="EXPENSE"))
+        revenue = calc_chiffre_affaires(ctx)
+        expenses = calc_depenses(ctx)
+        profit = calc_benefice(ctx)
+        margin = calc_marge(ctx)
+        avg_sale = calc_panier_moyen(ctx)
+        unique_clients_count = calc_clients(ctx)
+        transactions_count = calc_nombre_transactions(ctx)
+        total_receivables = calc_creances(ctx)
+        total_debts = calc_dettes(ctx)
+        treasury_balance = calc_tresorerie(ctx)
 
-        # 2. Calculs principaux
-        revenue = recettes_qs.aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
-        expenses = depenses_qs.aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
-        avg_sale = recettes_qs.aggregate(a=Avg('amount_ttc'))['a'] or Decimal('0.00')
-        profit = revenue - expenses
-
-        margin = (profit / revenue * 100) if revenue > 0 else Decimal('0.00')
-
-        # Nombre de clients uniques
-        unique_clients_count = (
-            recettes_qs
-            .exclude(vendor_or_client__isnull=True)
-            .exclude(vendor_or_client__exact='')
-            .values('vendor_or_client')
-            .distinct()
-            .count()
-        )
-
-        # Trésorerie globale (Toutes périodes confondues)
-        all_ops = Operation.objects.filter(entreprise=entreprise)
-        total_in = all_ops.filter(Q(transaction_type__iexact="RECETTE") | Q(transaction_type__iexact="INCOME")).aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
-        total_out = all_ops.filter(Q(transaction_type__iexact="DEPENSE") | Q(transaction_type__iexact="EXPENSE")).aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
-        treasury_balance = total_in - total_out
-
-        # Calcul des Créances
-        creances_ops = all_ops.filter(Q(transaction_type__iexact="RECETTE"), statut_paiement="CREDIT")
-        du_creances = creances_ops.aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
-        paye_creances = creances_ops.aggregate(t=Sum('montant_paye'))['t'] or Decimal('0.00')
-        total_receivables = du_creances - paye_creances
-
-        # Calcul des Dettes
-        dettes_ops = all_ops.filter(Q(transaction_type__iexact="PRET_RECU"), statut_paiement="CREDIT")
-        du_dettes = dettes_ops.aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
-        paye_dettes = dettes_ops.aggregate(t=Sum('montant_paye'))['t'] or Decimal('0.00')
-        total_debts = du_dettes - paye_dettes
-
-        # 3. Tendances
-        prev_ops = self._get_previous_period_ops(entreprise, period, now)
-        prev_revenue = prev_ops.filter(Q(transaction_type__iexact="RECETTE") | Q(transaction_type__iexact="INCOME")).aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
-        prev_expenses = prev_ops.filter(Q(transaction_type__iexact="DEPENSE") | Q(transaction_type__iexact="EXPENSE")).aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
+        # Tendances : comparaison avec la période précédente
+        precedente = resoudre_periode_precedente(period)
+        if precedente:
+            prev_ctx = KpiContexte(entreprise, precedente[0], precedente[1])
+            prev_revenue = calc_chiffre_affaires(prev_ctx)
+            prev_expenses = calc_depenses(prev_ctx)
+        else:
+            prev_revenue = 0.0
+            prev_expenses = 0.0
         prev_profit = prev_revenue - prev_expenses
 
         return Response(
@@ -217,7 +168,7 @@ class DashboardKPIAPIView(APIView):
                     "net_profit": float(profit),
                     "profit_margin_percentage": round(float(margin), 2),
                     "average_sale_amount": round(float(avg_sale), 2),
-                    "total_transactions_count": ops.count(),
+                    "total_transactions_count": transactions_count,
                     "unique_clients_count": unique_clients_count,
                     "total_receivables": float(total_receivables),
                     "total_debts": float(total_debts),
@@ -1191,27 +1142,10 @@ class KpiNiveauAPIView(APIView):
     """
     6. ENDPOINT KPI PAR NIVEAU (GET)
     Renvoie les KPI du catalogue (modèle Kpi) pour un niveau donné.
+    Les valeurs viennent de apps.femi_account.kpi_service (KPI_CALCULATEURS).
     """
 
     permission_classes = [IsAuthenticated]
-
-    def _calculateurs(self):
-        return {
-            "Chiffre d'affaires": self._calc_chiffre_affaires,
-            "Bénéfice": self._calc_benefice,
-            "Marge": self._calc_marge,
-            "Dépenses": self._calc_depenses,
-            "Trésorerie": self._calc_tresorerie,
-            "Clients": self._calc_clients,
-            "Créances": self._calc_creances,
-            "Prêts accordés": self._calc_prets_accordes,
-            "Dettes": self._calc_dettes,
-            "Ventes": self._calc_nombre_ventes,
-            "Panier moyen": self._calc_panier_moyen,
-            "Nombre de prestations": self._calc_nombre_prestations,
-            "Heures facturées": self._calc_heures_facturees,
-            "Marge par prestation": self._calc_marge_par_prestation,
-        }
 
     if HAS_SPECTACULAR:
         @extend_schema(
@@ -1249,24 +1183,18 @@ class KpiNiveauAPIView(APIView):
             kpis_catalogue = Kpi.objects.filter(niveau=niveau, secteur__isnull=True)
 
         period = request.query_params.get('period', 'this_month')
-        now = timezone.now()
-        ops_periode = self._filtrer_periode(Operation.objects.filter(entreprise=entreprise), period, now)
-        toutes_ops = Operation.objects.filter(entreprise=entreprise)
+        debut, fin = resoudre_periode(period)
+        ctx = KpiContexte(entreprise, debut, fin)
 
-        calculateurs = self._calculateurs()
         resultats = []
-
         for kpi in kpis_catalogue:
-            calc = calculateurs.get(kpi.nom)
-            valeur = calc(entreprise, ops_periode, toutes_ops) if calc else None
-
             resultats.append({
                 "nom": kpi.nom,
                 "icone": kpi.icone,
                 "unite": kpi.unite,
                 "description": kpi.formule_description,
-                "disponible": calc is not None,
-                "valeur": valeur,
+                "disponible": kpi.nom in KPI_CALCULATEURS,
+                "valeur": calculer_kpi(kpi.nom, ctx),
             })
 
         return Response({
@@ -1274,116 +1202,6 @@ class KpiNiveauAPIView(APIView):
             "period": period,
             "kpis": resultats,
         })
-
-    def _filtrer_periode(self, ops, period, now):
-        if period == 'today':
-            return ops.filter(transaction_date=now.date())
-        if period == 'this_month':
-            return ops.filter(transaction_date__year=now.year, transaction_date__month=now.month)
-        if period == 'last_month':
-            month = 12 if now.month == 1 else now.month - 1
-            year = now.year - 1 if now.month == 1 else now.year
-            return ops.filter(transaction_date__year=year, transaction_date__month=month)
-        if period == 'this_year':
-            return ops.filter(transaction_date__year=now.year)
-        return ops
-
-    # --- Calculateurs ---
-
-    def _calc_chiffre_affaires(self, entreprise, ops_periode, toutes_ops):
-        total = ops_periode.filter(transaction_type="RECETTE").aggregate(t=Sum('amount_ttc'))['t']
-        return float(total or Decimal('0.00'))
-
-    def _calc_depenses(self, entreprise, ops_periode, toutes_ops):
-        total = ops_periode.filter(transaction_type="DEPENSE").aggregate(t=Sum('amount_ttc'))['t']
-        return float(total or Decimal('0.00'))
-
-    def _calc_benefice(self, entreprise, ops_periode, toutes_ops):
-        return self._calc_chiffre_affaires(entreprise, ops_periode, toutes_ops) - self._calc_depenses(entreprise, ops_periode, toutes_ops)
-
-    def _calc_tresorerie(self, entreprise, ops_periode, toutes_ops):
-        encaisse = toutes_ops.filter(transaction_type="RECETTE").aggregate(t=Sum('montant_paye'))['t'] or Decimal('0.00')
-        decaisse = toutes_ops.filter(transaction_type="DEPENSE").aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
-
-        prets_donnes = toutes_ops.filter(transaction_type="PRET_DONNE")
-        sorti_prets = prets_donnes.aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
-        rembourse_recu = prets_donnes.aggregate(t=Sum('montant_paye'))['t'] or Decimal('0.00')
-
-        prets_recus = toutes_ops.filter(transaction_type="PRET_RECU")
-        entre_prets = prets_recus.aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
-        rembourse_verse = prets_recus.aggregate(t=Sum('montant_paye'))['t'] or Decimal('0.00')
-
-        return float(
-            encaisse - decaisse
-            - sorti_prets + rembourse_recu
-            + entre_prets - rembourse_verse
-        )
-
-    def _calc_clients(self, entreprise, ops_periode, toutes_ops):
-        return Contact.objects.filter(
-            entreprise=entreprise, type="CLIENT", operations__in=ops_periode
-        ).distinct().count()
-
-    def _calc_creances(self, entreprise, ops_periode, toutes_ops):
-        creances_ops = toutes_ops.filter(transaction_type="RECETTE", statut_paiement="CREDIT")
-        du = creances_ops.aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
-        paye = creances_ops.aggregate(t=Sum('montant_paye'))['t'] or Decimal('0.00')
-        return float(du - paye)
-
-    def _calc_marge(self, entreprise, ops_periode, toutes_ops):
-        ca = self._calc_chiffre_affaires(entreprise, ops_periode, toutes_ops)
-        if ca <= 0:
-            return 0.0
-        depenses = self._calc_depenses(entreprise, ops_periode, toutes_ops)
-        return round(((ca - depenses) / ca) * 100, 2)
-
-    def _calc_panier_moyen(self, entreprise, ops_periode, toutes_ops):
-        ventes = ops_periode.filter(transaction_type="RECETTE")
-        nb_ventes = ventes.count()
-        if nb_ventes == 0:
-            return 0.0
-        total = ventes.aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
-        return round(float(total) / nb_ventes, 2)
-
-    def _calc_nombre_ventes(self, entreprise, ops_periode, toutes_ops):
-        return ops_periode.filter(transaction_type="RECETTE").count()
-
-    def _calc_prets_accordes(self, entreprise, ops_periode, toutes_ops):
-        qs = toutes_ops.filter(transaction_type="PRET_DONNE", statut_paiement="CREDIT")
-        prete = qs.aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
-        rembourse = qs.aggregate(t=Sum('montant_paye'))['t'] or Decimal('0.00')
-        return float(prete - rembourse)
-
-    def _calc_dettes(self, entreprise, ops_periode, toutes_ops):
-        qs = toutes_ops.filter(transaction_type="PRET_RECU", statut_paiement="CREDIT")
-        emprunte = qs.aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
-        rembourse = qs.aggregate(t=Sum('montant_paye'))['t'] or Decimal('0.00')
-        return float(emprunte - rembourse)
-
-    def _calc_nombre_prestations(self, entreprise, ops_periode, toutes_ops):
-        return PrestationRealisee.objects.filter(
-            operation__in=ops_periode
-        ).aggregate(t=Sum('quantite'))['t'] or 0
-
-    def _calc_heures_facturees(self, entreprise, ops_periode, toutes_ops):
-        total_minutes = PrestationRealisee.objects.filter(
-            operation__in=ops_periode
-        ).aggregate(t=Sum('duree_minutes'))['t'] or 0
-        return round(total_minutes / 60, 2)
-
-    def _calc_marge_par_prestation(self, entreprise, ops_periode, toutes_ops):
-        lignes = PrestationRealisee.objects.filter(
-            operation__in=ops_periode, prestation__cout_unitaire__isnull=False
-        ).select_related('prestation')
-        if not lignes.exists():
-            return None
-        return [
-            {
-                "prestation": l.prestation.nom,
-                "marge_unitaire": float(l.prix_unitaire_facture - l.prestation.cout_unitaire),
-            }
-            for l in lignes
-        ]
 
 
 class DeactivateAccountAPIView(APIView):
