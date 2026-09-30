@@ -639,6 +639,10 @@ class Conversation(models.Model):
         choices=CANAL_CHOICES
     )
 
+    # Actions en attente de clarification (JSON), gérées par
+    # apps/femi_agent/agent/pending_action.py. Jamais lues directement ailleurs.
+    pending_action = models.JSONField(null=True, blank=True, default=None)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

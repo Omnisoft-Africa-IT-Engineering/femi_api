@@ -52,6 +52,7 @@ from apps.femi_agent.agent.conversation_manager import (
     record_message,
     resolve_type_message,
 )
+from apps.femi_agent.agent.pending_action import PendingTurn
 from apps.femi_agent.agent.social_replies import (
     build_off_topic_reply,
     build_social_reply,
@@ -206,9 +207,20 @@ class FemiRouterManager:
             # 3. Routage
             # ----------------------------------------------------
 
+            # Actions en attente de clarification (best-effort)
+            pending = await sync_to_async(PendingTurn.load)(
+                conversation
+            )
+
             router_output = await RouterExecutor.aexecute(
                 combined_text,
                 history=history_text,
+                **pending.router_kwargs(),
+            )
+
+            pending.start_turn(
+                combined_text,
+                len(router_output.intents),
             )
 
             # ----------------------------------------------------
@@ -222,7 +234,10 @@ class FemiRouterManager:
                 source=source,
                 raw_text=combined_text,
                 image_bytes=image_bytes,
+                pending=pending,
             )
+
+            await sync_to_async(pending.commit)()
 
             await cls._arecord_turn(
                 conversation,
@@ -395,9 +410,18 @@ class FemiRouterManager:
             # 3. Routage
             # ----------------------------------------------------
 
+            # Actions en attente de clarification (best-effort)
+            pending = PendingTurn.load(conversation)
+
             router_output = RouterExecutor.execute(
                 combined_text,
                 history=history_text,
+                **pending.router_kwargs(),
+            )
+
+            pending.start_turn(
+                combined_text,
+                len(router_output.intents),
             )
 
             logger.info(
@@ -417,7 +441,10 @@ class FemiRouterManager:
                 source=source,
                 raw_text=combined_text,
                 image_bytes=image_bytes,
+                pending=pending,
             )
+
+            pending.commit()
 
             cls._record_turn(
                 conversation,
@@ -931,7 +958,12 @@ class FemiRouterManager:
         intent: RouterIntent,
         entreprise: Entreprise,
         from_document: bool = False,
+        segment: Optional[str] = None,
     ) -> Tuple[DispatchResult, bool]:
+
+        # Texte envoyé à l'agent : segment fusionné avec l'action en
+        # attente (voir pending_action.py) ou, à défaut, celui du Router.
+        text = segment or intent.raw_segment
 
         logger.info(
             "[FemiRouterManager] "
@@ -943,7 +975,7 @@ class FemiRouterManager:
         if intent.agent == "ACCOUNTING":
 
             result = AccountingExecutor.execute(
-                intent.raw_segment,
+                text,
                 entreprise,
                 from_document=from_document,
             )
@@ -973,7 +1005,7 @@ class FemiRouterManager:
 
             result = (
                 FinancialAnalystExecutor.execute(
-                    intent.raw_segment,
+                    text,
                     entreprise,
                 )
             )
@@ -991,7 +1023,7 @@ class FemiRouterManager:
 
             result = (
                 AccountingModifyExecutor.execute(
-                    intent.raw_segment,
+                    text,
                     entreprise,
                 )
             )
@@ -1004,7 +1036,7 @@ class FemiRouterManager:
         if intent.agent == "CUSTOMER":
 
             result = CustomerExecutor.execute(
-                intent.raw_segment,
+                text,
                 entreprise,
             )
 
@@ -1037,12 +1069,17 @@ class FemiRouterManager:
         intent: RouterIntent,
         entreprise: Entreprise,
         from_document: bool = False,
+        segment: Optional[str] = None,
     ) -> Tuple[DispatchResult, bool]:
+
+        # Texte envoyé à l'agent : segment fusionné avec l'action en
+        # attente (voir pending_action.py) ou, à défaut, celui du Router.
+        text = segment or intent.raw_segment
 
         if intent.agent == "ACCOUNTING":
 
             result = await AccountingExecutor.aexecute(
-                intent.raw_segment,
+                text,
                 entreprise,
                 from_document=from_document,
             )
@@ -1056,7 +1093,7 @@ class FemiRouterManager:
 
             result = (
                 await FinancialAnalystExecutor.aexecute(
-                    intent.raw_segment,
+                    text,
                     entreprise,
                 )
             )
@@ -1074,7 +1111,7 @@ class FemiRouterManager:
 
             result = (
                 await AccountingModifyExecutor.aexecute(
-                    intent.raw_segment,
+                    text,
                     entreprise,
                 )
             )
@@ -1087,7 +1124,7 @@ class FemiRouterManager:
         if intent.agent == "CUSTOMER":
 
             result = await CustomerExecutor.aexecute(
-                intent.raw_segment,
+                text,
                 entreprise,
             )
 
@@ -1351,6 +1388,7 @@ class FemiRouterManager:
         source: str = "API",
         raw_text: str = "",
         image_bytes: Optional[bytes] = None,
+        pending: Optional[PendingTurn] = None,
     ) -> RouterProcessResult:
 
         logger.info("=" * 80)
@@ -1470,13 +1508,30 @@ class FemiRouterManager:
 
             try:
 
+                segment, doc_flag = (
+                    pending.resolve(intent, bool(image_bytes))
+                    if pending is not None
+                    else (intent.raw_segment, bool(image_bytes))
+                )
+
                 result, dispatch_needs_clarification = (
                     cls._dispatch_intent(
                         intent,
                         entreprise,
-                        from_document=bool(image_bytes),
+                        from_document=doc_flag,
+                        segment=segment,
                     )
                 )
+
+                if pending is not None:
+                    pending.observe(
+                        intent,
+                        segment,
+                        doc_flag,
+                        bool(dispatch_needs_clarification)
+                        and result is not None,
+                        getattr(result, "missing_fields", None),
+                    )
 
             except Exception:
 
@@ -1770,7 +1825,11 @@ class FemiRouterManager:
                             entreprise=entreprise,
                             utilisateur=utilisateur,
                             source=source,
-                            raw_text=raw_text,
+                            raw_text=(
+                                pending.effective_raw_text(raw_text)
+                                if pending is not None
+                                else raw_text
+                            ),
                             image_bytes=image_bytes,
                         )
                     )
@@ -2132,6 +2191,7 @@ class FemiRouterManager:
         source: str = "API",
         raw_text: str = "",
         image_bytes: Optional[bytes] = None,
+        pending: Optional[PendingTurn] = None,
     ) -> RouterProcessResult:
 
         needs_clarification = False
@@ -2172,13 +2232,30 @@ class FemiRouterManager:
                 if field not in missing_fields:
                     missing_fields.append(field)
 
+            segment, doc_flag = (
+                pending.resolve(intent, bool(image_bytes))
+                if pending is not None
+                else (intent.raw_segment, bool(image_bytes))
+            )
+
             result, dispatch_needs_clarification = (
                 await cls._adispatch_intent(
                     intent,
                     entreprise,
-                    from_document=bool(image_bytes),
+                    from_document=doc_flag,
+                    segment=segment,
                 )
             )
+
+            if pending is not None:
+                pending.observe(
+                    intent,
+                    segment,
+                    doc_flag,
+                    bool(dispatch_needs_clarification)
+                    and result is not None,
+                    getattr(result, "missing_fields", None),
+                )
 
             if dispatch_needs_clarification:
                 needs_clarification = True
@@ -2269,7 +2346,11 @@ class FemiRouterManager:
                 entreprise=entreprise,
                 utilisateur=utilisateur,
                 source=source,
-                raw_text=raw_text,
+                raw_text=(
+                    pending.effective_raw_text(raw_text)
+                    if pending is not None
+                    else raw_text
+                ),
                 image_bytes=image_bytes,
             )
 
