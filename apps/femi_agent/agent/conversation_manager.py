@@ -149,6 +149,26 @@ def build_history_text(
     return "\n".join(lignes)
 
 
+def _touch_conversation(conversation: Conversation) -> None:
+    """Met à jour Conversation.updated_at au moment d'un nouveau message.
+
+    Sans cela, la fenêtre de regroupement de 24 h se calcule depuis la
+    création de la Conversation et non depuis son dernier message.
+    Utilise .update() (pas .save()) pour éviter tout effet de bord.
+    """
+
+    try:
+        Conversation.objects.filter(pk=conversation.pk).update(
+            updated_at=timezone.now()
+        )
+    except Exception:
+        logger.exception(
+            "[conversation_manager] Échec de la mise à jour de "
+            "updated_at (conversation_id=%s) — ignoré.",
+            getattr(conversation, "id", None),
+        )
+
+
 def record_message(
     conversation: Conversation,
     canal: str,
@@ -165,7 +185,7 @@ def record_message(
     """
 
     try:
-        return ConversationHistory.objects.create(
+        message = ConversationHistory.objects.create(
             conversation=conversation,
             canal=canal,
             expediteur=expediteur,
@@ -174,6 +194,8 @@ def record_message(
             fichier_url=fichier_url,
             operation=operation,
         )
+        _touch_conversation(conversation)
+        return message
     except Exception:
         logger.exception(
             "[conversation_manager] "
