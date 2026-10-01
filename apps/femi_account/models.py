@@ -4,6 +4,10 @@ from django.contrib.auth.models import AbstractUser
 import random
 from datetime import timedelta
 from django.utils import timezone
+from django.conf import settings
+from rest_framework import serializers
+
+
 
 
 class Utilisateur(AbstractUser):
@@ -903,3 +907,122 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"{self.utilisateur} — {self.titre}"
+
+
+import datetime
+from django.db import models
+from django.conf import settings
+from apps.femi_account.models import Entreprise
+
+
+class PMEProfile(models.Model):
+    # Lien avec l'utilisateur / entreprise pour le filtrage
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.CASCADE, 
+        related_name="pme_profile"
+    )
+    entreprise = models.OneToOneField(
+        Entreprise,
+        on_delete=models.CASCADE,
+        related_name="pme_profile",
+        null=True, blank=True
+    )
+    
+    # --- HEADER (En-tête Document) ---
+    nom_commercial = models.CharField(max_length=255)
+    logo = models.ImageField(upload_to="pme_logos/", null=True, blank=True)
+    telephone_pro = models.CharField(max_length=30)
+    adresse = models.TextField(blank=True, null=True)
+    nif_rccm = models.CharField(
+        max_length=100, 
+        blank=True, 
+        null=True, 
+        help_text="Identifiant Fiscal / RCCM pour la régularité fiscale"
+    )
+    
+    # --- FOOTER (Pied de Page Document) ---
+    moyens_paiement = models.TextField(
+        blank=True, 
+        null=True, 
+        help_text="Ex: Mobile Money (TMoney / Flooz / Wave), RIB, etc."
+    )
+    conditions_defaut = models.TextField(
+        blank=True, 
+        null=True, 
+        default="Devis valable 30 jours.",
+        help_text="Mentions légales de bas de page"
+    )
+    tva_applicable = models.BooleanField(
+        default=False,
+        help_text="Indique si l'entreprise applique la TVA par défaut"
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.nom_commercial or f"Profil {self.id}"
+
+
+class Devis(models.Model):
+    class StatutDevis(models.TextChoices):
+        BROUILLON = 'BROUILLON', 'Brouillon'
+        ENVOYE = 'ENVOYE', 'Envoyé'
+        ACCEPTE = 'ACCEPTE', 'Accepté'
+        REFUSE = 'REFUSE', 'Refusé'
+        CONVERTI = 'CONVERTI', 'Converti en Facture'
+
+    # Lien avec la PME
+    profile = models.ForeignKey(
+        PMEProfile, 
+        on_delete=models.CASCADE, 
+        related_name='devis'
+    )
+    
+    # Identifiants & Client
+    numero_devis = models.CharField(max_length=50, blank=True)  # ex: DEV-2026-001
+    client_nom = models.CharField(max_length=255)
+    client_telephone = models.CharField(max_length=30, blank=True, null=True)
+    
+    # Dates & Statut
+    date_emission = models.DateField(default=datetime.date.today)
+    date_validite = models.DateField(null=True, blank=True)
+    statut = models.CharField(
+        max_length=20, 
+        choices=StatutDevis.choices, 
+        default=StatutDevis.BROUILLON
+    )
+    
+    # Financials
+    tva_taux = models.DecimalField(max_digits=5, decimal_places=4, default=0.1800)
+    montant_total = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.numero_devis} - {self.client_nom} ({self.get_statut_display()})"
+
+
+class LigneDevis(models.Model):
+    devis = models.ForeignKey(
+        Devis, 
+        on_delete=models.CASCADE, 
+        related_name='lignes'
+    )
+    designation = models.CharField(max_length=255)
+    quantite = models.DecimalField(max_digits=10, decimal_places=2, default=1.00)
+    prix_unitaire = models.DecimalField(max_digits=12, decimal_places=2)
+    total_ligne = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
+
+    def save(self, *args, **kwargs):
+        # Calcul automatique du total de la ligne
+        self.total_ligne = self.quantite * self.prix_unitaire
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.designation} x {self.quantite}"

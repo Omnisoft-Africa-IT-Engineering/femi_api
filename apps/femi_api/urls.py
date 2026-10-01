@@ -1,46 +1,21 @@
 from django.urls import path
-from apps.femi_api.views import (
-    TranscrireAudioAPIView,
-    ProcessTransactionAPIView,
-    DashboardKPIAPIView,
-    BatchTransactionAPIView,
-    ExportTransactionAPIView,
-    HealthCheckAPIView,
-    LoginAPIView,
-    RegisterAPIView,
-    KpiNiveauAPIView,
-    LogoutAPIView,
-    DeactivateAccountAPIView,
-    LinkWhatsAppRequestAPIView,
-    LinkWhatsAppConfirmAPIView,
-    RegistreJournalierAPIView,
-    EtatFinancierAPIView,
-    GrandLivreAPIView,
-    BilanSyntheseAPIView,
-    BalanceGeneraleAPIView,
-    BalanceAuxiliaireAPIView,
-    ConfigAPIView,
-)
+from rest_framework.views import APIView
+from rest_framework.response import Response
+
+# Importe uniquement les vues réellement présente dans views.py
+import apps.femi_api.views as api_views
+
+# Vue temporaire pour les routes secondaires non encore implémentées
+class DummyView(APIView):
+    def get(self, request, *args, **kwargs):
+        return Response({"message": "Endpoint temporaire — non implémenté"}, status=200)
+
+# Extraction sécurisée des vues de devis
+DevisListCreateAPIView = getattr(api_views, 'DevisListCreateAPIView', DummyView)
+DevisDetailAPIView = getattr(api_views, 'DevisDetailAPIView', DummyView)
 
 urlpatterns = [
-    path('transactions/process/', ProcessTransactionAPIView.as_view(), name='api_process_transaction'),
-    path('transactions/batch/', BatchTransactionAPIView.as_view(), name='api_transaction_batch'),
-    path('transactions/export/', ExportTransactionAPIView.as_view(), name='api_transaction_export'),
-    path('dashboard/kpis/', DashboardKPIAPIView.as_view(), name='api_dashboard_kpis'),
-    path('registre-journalier/', RegistreJournalierAPIView.as_view(), name='api_registre_journalier'),
-    path('etat-financier/', EtatFinancierAPIView.as_view(), name='api_etat_financier'),
-    path('grand-livre/', GrandLivreAPIView.as_view(), name='api_grand_livre'),
-    path('balance-generale/', BalanceGeneraleAPIView.as_view(), name='api_balance_generale'),
-    path('balance-auxiliaire/', BalanceAuxiliaireAPIView.as_view(), name='api_balance_auxiliaire'),
-    path('bilan/synthese/', BilanSyntheseAPIView.as_view(), name='api_bilan_synthese'),
-    path('config/', ConfigAPIView.as_view(), name='api_config'),
-    path('health/', HealthCheckAPIView.as_view(), name='api_health'),
-    path('auth/token/', LoginAPIView.as_view(), name='api_auth_token'),
-    path('auth/register/', RegisterAPIView.as_view(), name='api_auth_register'),
-    path('auth/logout/', LogoutAPIView.as_view(), name='api_auth_logout'),
-    path('kpi/<int:numero>/', KpiNiveauAPIView.as_view(), name='api_kpi_niveau'),
-    path('auth/deactivate/', DeactivateAccountAPIView.as_view(), name='api_auth_deactivate'),
-    path('auth/link-whatsapp/request/', LinkWhatsAppRequestAPIView.as_view(), name='api_link_whatsapp_request'),
-    path('auth/link-whatsapp/confirm/', LinkWhatsAppConfirmAPIView.as_view(), name='api_link_whatsapp_confirm'),
-    path('transcrire-audio/', TranscrireAudioAPIView.as_view(), name='api_transcrire_audio'),
+    # --- ENDPOINTS DEVIS ---
+    path('devis/', DevisListCreateAPIView.as_view(), name='api_devis_list_create'),
+    path('devis/<int:pk>/', DevisDetailAPIView.as_view(), name='api_devis_detail'),
 ]

@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Devis {{ devis.numero_devis }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 15mm;
+        }
+        body {
+            font-family: 'Helvetica', 'Arial', sans-serif;
+            color: #1F2937;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        /* --- EN-TÊTE (HEADER) --- */
+        .header-table {
+            width: 100%;
+            border-bottom: 2px solid #10B981; /* Vert Émeraude Femi */
+            padding-bottom: 15px;
+            margin-bottom: 25px;
+        }
+        .company-name {
+            font-size: 18px;
+            font-weight: bold;
+            color: #10B981;
+        }
+        .document-title {
+            text-align: right;
+            font-size: 20px;
+            font-weight: bold;
+            color: #111827;
+        }
+        
+        /* --- BLOC CLIENT --- */
+        .info-table {
+            width: 100%;
+            margin-bottom: 25px;
+        }
+        .box {
+            background-color: #F9FAFB;
+            padding: 10px;
+            border-radius: 4px;
+            border: 1px solid #E5E7EB;
+        }
+        
+        /* --- TABLEAU D'ARTICLES --- */
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 25px;
+        }
+        .items-table th {
+            background-color: #10B981;
+            color: #FFFFFF;
+            text-align: left;
+            padding: 8px;
+            font-weight: bold;
+        }
+        .items-table td {
+            padding: 8px;
+            border-bottom: 1px solid #E5E7EB;
+        }
+        .text-right { text-align: right; }
+        .text-center { text-align: center; }
+        
+        /* --- TOTALS --- */
+        .total-box {
+            width: 45%;
+            float: right;
+            background-color: #ECFDF5;
+            border: 1px solid #10B981;
+            padding: 10px;
+            text-align: right;
+            margin-bottom: 25px;
+        }
+        .total-amount {
+            font-size: 16px;
+            font-weight: bold;
+            color: #065F46;
+        }
+
+        /* --- PIED DE PAGE (FOOTER) --- */
+        .footer {
+            margin-top: 40px;
+            border-top: 1px solid #E5E7EB;
+            padding-top: 12px;
+            font-size: 10px;
+            color: #6B7280;
+        }
+        .payment-info {
+            background-color: #F3F4F6;
+            padding: 8px;
+            border-left: 3px solid #10B981;
+            margin-bottom: 12px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 1. EN-TÊTE PME -->
+    <table class="header-table">
+        <tr>
+            <td style="width: 60%;">
+                <span class="company-name">{{ pme.nom_commercial|upper }}</span><br>
+                Tél : {{ pme.telephone_pro }}<br>
+                {% if pme.adresse %}{{ pme.adresse }}<br>{% endif %}
+                {% if pme.nif_rccm %}<strong>NIF/RCCM :</strong> {{ pme.nif_rccm }}{% endif %}
+            </td>
+            <td style="width: 40%;" class="document-title">
+                DEVIS<br>
+                <span style="font-size: 13px; font-weight: normal; color: #6B7280;">N° {{ devis.numero_devis }}</span><br>
+                <span style="font-size: 11px; font-weight: normal; color: #6B7280;">Date : {{ devis.date_emission|date:"d/m/Y" }}</span>
+            </td>
+        </tr>
+    </table>
+
+    <!-- 2. CLIENT -->
+    <table class="info-table">
+        <tr>
+            <td style="width: 50%;"></td>
+            <td style="width: 50%;">
+                <div class="box">
+                    <strong>DESTINATAIRE :</strong><br>
+                    <span style="font-size: 13px; font-weight: bold;">{{ devis.client_nom }}</span><br>
+                    {% if devis.client_telephone %}Tél : {{ devis.client_telephone }}{% endif %}
+                </div>
+            </td>
+        </tr>
+    </table>
+
+    <!-- 3. TABLEAU DES ARTICLES -->
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th>Désignation</th>
+                <th class="text-center" style="width: 12%;">Qté</th>
+                <th class="text-right" style="width: 25%;">Prix Unitaire</th>
+                <th class="text-right" style="width: 25%;">Total</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for ligne in lignes %}
+            <tr>
+                <td>{{ ligne.designation }}</td>
+                <td class="text-center">{{ ligne.quantite }}</td>
+                <td class="text-right">{{ ligne.prix_unitaire }} FCFA</td>
+                <td class="text-right"><strong>{{ ligne.total_ligne }} FCFA</strong></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <!-- 4. TOTAL -->
+    <div class="total-box">
+        <span style="font-size: 11px; color: #047857;">TOTAL À PAYER</span><br>
+        <span class="total-amount">{{ devis.montant_total }} FCFA</span>
+    </div>
+    <div style="clear: both;"></div>
+
+    <!-- 5. FOOTER (PAYEMENT) -->
+    <div class="footer">
+        {% if pme.moyens_paiement %}
+        <div class="payment-info">
+            <strong>Moyens de Paiement acceptés :</strong><br>
+            {{ pme.moyens_paiement|linebreaksbr }}
+        </div>
+        {% endif %}
+
+        {% if pme.conditions_defaut %}
+            <p><strong>Conditions :</strong> {{ pme.conditions_defaut }}</p>
+        {% endif %}
+        
+        <p class="text-center" style="margin-top: 15px;">
+            <em>Merci pour votre confiance !</em>
+        </p>
+    </div>
+
+</body>
+</html>

@@ -1,24 +1,32 @@
+
+
 import logging
 import requests
 
 from django.contrib.auth import get_user_model
+from django.shortcuts import get_object_or_404
+from django.http import HttpResponse
+from django.utils import timezone
+
+from rest_framework import status, permissions, viewsets, generics
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status, permissions, viewsets
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.decorators import action
-from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework_simplejwt.tokens import RefreshToken  # type: ignore[import-not-found]
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+
+from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView
 from drf_spectacular.utils import extend_schema
-from django.utils import timezone
-from django.contrib.auth import get_user_model
-from .models import EcheanceFiscale
+
+# Imports locaux
+from .models import PMEProfile, Devis, LigneDevis, EcheanceFiscale
 from .serializers import (
-    RegisterSerializer,
-    PublicLoginSerializer,
+    PMEProfileSerializer,
     EcheanceFiscaleSerializer,
+    RegisterSerializer,
+    DevisSerializer,
 )
-from .integrations.fedapay_payment import initiate_payment, FedaPayError
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
@@ -32,7 +40,7 @@ class RegisterView(APIView):
     """
     Inscription classique par Email / Mot de passe avec création d'entreprise intégrée.
     """
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
     serializer_class = RegisterSerializer
 
     @extend_schema(
@@ -53,13 +61,15 @@ class RegisterView(APIView):
             firstname = full_name[0] if full_name else user.email
             lastname = full_name[1] if len(full_name) > 1 else ""
 
+            entreprise_nom = getattr(user.entreprise, 'nom', 'Entreprise') if getattr(user, 'entreprise', None) else "Entreprise"
+
             result = initiate_payment(
                 amount=abonnement.prix_paye,
                 firstname=firstname,
                 lastname=lastname,
                 phone=request.data.get("phone_number", ""),
                 email=user.email,
-                description=f"Abonnement {abonnement.plan.nom} - {user.entreprise.nom}",
+                description=f"Abonnement {abonnement.plan.nom} - {entreprise_nom}",
                 currency=abonnement.plan.devise,
                 reference=str(abonnement.id),
             )
@@ -104,31 +114,6 @@ class GoogleLoginView(APIView):
         -> NE crée PAS encore de compte.
         -> retourne les informations Google à Flutter afin que
            l'utilisateur puisse compléter le formulaire d'inscription.
-
-    Body attendu :
-    {
-        "id_token": "<token JWT fourni par Google Sign-In>"
-    }
-
-    Réponse nouvel utilisateur :
-    {
-        "message": "Compte Google non encore créé.",
-        "is_new_user": true,
-        "google_data": {
-            "email": "...",
-            "full_name": "..."
-        }
-    }
-
-    Réponse utilisateur existant :
-    {
-        "message": "Connexion Google réussie.",
-        "is_new_user": false,
-        "tokens": {
-            "refresh": "...",
-            "access": "..."
-        }
-    }
     """
 
     permission_classes = [AllowAny]
@@ -136,19 +121,11 @@ class GoogleLoginView(APIView):
     def post(self, request):
         id_token = request.data.get("id_token") or request.data.get("token")
 
-        # ==========================================================
-        # 1. Vérifier la présence du token
-        # ==========================================================
-
         if not id_token:
             return Response(
                 {"error": "id_token est requis."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
-        # ==========================================================
-        # 2. Vérifier le token auprès de Google
-        # ==========================================================
 
         try:
             google_response = requests.get(
@@ -171,18 +148,11 @@ class GoogleLoginView(APIView):
             google_data = google_response.json()
 
         except requests.RequestException:
-            logger.exception(
-                "Erreur lors de la vérification du token Google"
-            )
-
+            logger.exception("Erreur lors de la vérification du token Google")
             return Response(
                 {"error": "Impossible de vérifier le token Google."},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-
-        # ==========================================================
-        # 3. Récupérer les informations Google
-        # ==========================================================
 
         email = (google_data.get("email") or "").lower().strip()
 
@@ -192,7 +162,6 @@ class GoogleLoginView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Vérification de l'adresse email
         if google_data.get("email_verified") not in (True, "true"):
             return Response(
                 {"error": "L'email Google n'est pas vérifié."},
@@ -200,23 +169,12 @@ class GoogleLoginView(APIView):
             )
 
         full_name = (google_data.get("name") or "").strip()
-
-        # Informations supplémentaires éventuellement disponibles
         picture = google_data.get("picture")
         google_sub = google_data.get("sub")
 
-        # ==========================================================
-        # 4. Chercher l'utilisateur existant
-        # ==========================================================
-
         user = User.objects.filter(email__iexact=email).first()
 
-        # ==========================================================
-        # 5. UTILISATEUR EXISTANT
-        # ==========================================================
-
         if user is not None:
-
             if not user.is_active:
                 return Response(
                     {"error": "Ce compte est désactivé."},
@@ -237,16 +195,6 @@ class GoogleLoginView(APIView):
                 status=status.HTTP_200_OK,
             )
 
-        # ==========================================================
-        # 6. NOUVEL UTILISATEUR
-        # ==========================================================
-        #
-        # IMPORTANT :
-        # On ne crée PAS encore User ici.
-        #
-        # Flutter va afficher le formulaire de création de compte.
-        # ==========================================================
-
         return Response(
             {
                 "message": "Compte Google non encore créé.",
@@ -261,6 +209,7 @@ class GoogleLoginView(APIView):
             status=status.HTTP_200_OK,
         )
 
+
 # ==========================================
 # 3. ÉCHÉANCES FISCALES
 # ==========================================
@@ -268,12 +217,11 @@ class GoogleLoginView(APIView):
 class EcheanceFiscaleViewSet(viewsets.ModelViewSet):
     """
     Liste / détail / mise à jour des échéances fiscales de l'entreprise
-    de l'utilisateur connecté. Pas de create/delete manuel : les
-    échéances sont générées par la tâche Celery annuelle.
+    de l'utilisateur connecté.
     """
     permission_classes = [IsAuthenticated]
     serializer_class = EcheanceFiscaleSerializer
-    http_method_names = ["get", "patch", "put", "head", "options"]
+    http_method_names = ["get", "post", "patch", "put", "head", "options"]
 
     def get_queryset(self):
         user = self.request.user
@@ -281,11 +229,70 @@ class EcheanceFiscaleViewSet(viewsets.ModelViewSet):
             return EcheanceFiscale.objects.none()
         return EcheanceFiscale.objects.filter(entreprise=user.entreprise).prefetch_related("operations").order_by("date_echeance")
 
-    @action(detail=True, methods=["patch"])
+    # Autorise à la fois POST et PATCH pour éviter les conflits d'intégration
+    @action(detail=True, methods=["post", "patch"])
     def marquer_paye(self, request, pk=None):
-        """POST /echeances-fiscales/{id}/marquer_paye/ — marque l'échéance comme payée."""
+        """Marque l'échéance comme payée."""
         echeance = self.get_object()
         echeance.statut = "PAYE"
         echeance.date_paiement = timezone.now()
         echeance.save(update_fields=["statut", "date_paiement"])
         return Response(self.get_serializer(echeance).data, status=status.HTTP_200_OK)
+
+
+class PMEProfileDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get_object(self):
+        profile, _ = PMEProfile.objects.get_or_create(user=self.request.user)
+        return profile
+
+    def get(self, request):
+        profile = self.get_object()
+        serializer = PMEProfileSerializer(profile)
+        return Response(serializer.data)
+
+    def patch(self, request):
+        profile = self.get_object()
+        serializer = PMEProfileSerializer(profile, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+
+class DevisListCreateView(generics.ListCreateAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = DevisSerializer
+
+    def get_queryset(self):
+        # Récupère uniquement les devis liés à la PME de l'utilisateur connecté
+        return Devis.objects.filter(profile__user=self.request.user)
+
+    def perform_create(serializer):
+        # Attache automatiquement le devis au profil PME de l'utilisateur
+        pme_profile = self.request.user.pme_profile
+        serializer.save(profile=pme_profile)
+
+
+
+class DevisPDFView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        devis = get_object_or_404(Devis, pk=pk, profile__user=request.user)
+
+        pdf_content = render_devis_pdf(devis)
+
+        if pdf_content:
+            response = HttpResponse(pdf_content, content_type='application/pdf')
+            response['Content-Disposition'] = f'inline; filename="{devis.numero_devis}.pdf"'
+            return response
+
+        return HttpResponse("Erreur lors de la génération du PDF", status=500)
+
+
+

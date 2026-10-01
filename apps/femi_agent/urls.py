@@ -1,12 +1,9 @@
 from django.urls import path
+from .views import PetitChatWelcomeView, PetitChatDevisView
 
-from apps.femi_agent.views import AgentChatAPIView
-
+app_name = "femi_agent"
 
 urlpatterns = [
-    path(
-        "chat/",
-        AgentChatAPIView.as_view(),
-        name="agent-chat",
-    ),
+    path('devis/welcome/', PetitChatWelcomeView.as_view(), name='petit-chat-welcome'),
+    path('devis/chat/', PetitChatDevisView.as_view(), name='petit-chat-devis'),
 ]
