@@ -6,6 +6,8 @@ from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
 from django.contrib.auth import authenticate
+from decimal import Decimal
+from apps.femi_account.models import PMEProfile, Devis, LigneDevis
 
 from .models import (
     Utilisateur,
@@ -148,3 +150,107 @@ class EcheanceFiscaleSerializer(serializers.ModelSerializer):
             }
             for piece in pieces
         ]
+
+
+
+class PMEProfileSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PMEProfile
+        fields = [
+            'id',
+            'nom_commercial',
+            'logo',
+            'telephone_pro',
+            'adresse',
+            'nif_rccm',
+            'moyens_paiement',
+            'conditions_defaut',
+            'tva_applicable',
+            'created_at',
+            'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class LigneDevisSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LigneDevis
+        fields = ['id', 'designation', 'quantite', 'prix_unitaire', 'total_ligne']
+        read_only_fields = ['id', 'total_ligne']
+
+
+class DevisSerializer(serializers.ModelSerializer):
+    lignes = LigneDevisSerializer(many=True)
+    statut_display = serializers.CharField(source='get_statut_display', read_only=True)
+
+    class Meta:
+        model = Devis
+        fields = [
+            'id', 
+            'numero_devis', 
+            'client_nom', 
+            'client_telephone', 
+            'date_emission', 
+            'date_validite', 
+            'statut', 
+            'statut_display',
+            'tva_taux',
+            'montant_total', 
+            'lignes', 
+            'created_at',
+            'updated_at'
+        ]
+        read_only_fields = ['id', 'numero_devis', 'montant_total', 'created_at', 'updated_at']
+
+    def create(self, validated_data):
+        lignes_data = validated_data.pop('lignes', [])
+        request = self.context.get('request')
+        
+        # Récupération du profil de la PME
+        profile = getattr(request.user, 'pme_profile', None) if request else None
+        if not profile and 'profile' in validated_data:
+            profile = validated_data.pop('profile')
+
+        # Numérotation séquentielle par PME et par Année
+        if not validated_data.get('numero_devis'):
+            annee = validated_data.get('date_emission').year if validated_data.get('date_emission') else 2026
+            count = Devis.objects.filter(profile=profile, created_at__year=annee).count() + 1
+            validated_data['numero_devis'] = f"DEV-{annee}-{count:03d}"
+
+        devis = Devis.objects.create(profile=profile, **validated_data)
+
+        # Création des lignes et calcul du total
+        total = Decimal('0.00')
+        for ligne_data in lignes_data:
+            ligne = LigneDevis.objects.create(devis=devis, **ligne_data)
+            total += (ligne.total_ligne or Decimal('0.00'))
+
+        devis.montant_total = total
+        devis.save(update_fields=['montant_total'])
+        return devis
+
+    def update(self, instance, validated_data):
+        # Règle de sécurité : Verrouillage si le devis n'est plus un brouillon ou envoyé
+        if instance.statut in [Devis.StatutDevis.ACCEPTE, Devis.StatutDevis.REFUSE, Devis.StatutDevis.CONVERTI]:
+            raise serializers.ValidationError(
+                "Impossible de modifier un devis déjà accepté, refusé ou converti."
+            )
+
+        lignes_data = validated_data.pop('lignes', None)
+
+        # Mise à jour des champs simples
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        # Mise à jour des lignes si fournies
+        if lignes_data is not None:
+            instance.lignes.all().delete()
+            total = Decimal('0.00')
+            for ligne_data in lignes_data:
+                ligne = LigneDevis.objects.create(devis=instance, **ligne_data)
+                total += (ligne.total_ligne or Decimal('0.00'))
+            instance.montant_total = total
+            instance.save(update_fields=['montant_total'])
+
+        return instance

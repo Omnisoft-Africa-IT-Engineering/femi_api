@@ -1,150 +1,85 @@
-"""
-apps/femi_account/services.py
-Génération des échéances fiscales annuelles pour une entreprise, selon
-le calendrier OTR (Office Togolais des Recettes).
-
-⚠️ Les dates ci-dessous sont des valeurs par défaut à valider avec un
-comptable ou le calendrier officiel OTR — je ne suis pas en mesure de
-garantir qu'elles correspondent exactement à la réglementation en
-vigueur. Adapte-les si besoin avant mise en production.
-
-⚠️ RÈGLES DE FILTRAGE PAR TYPE — également à valider :
-Au Togo, ce sont en principe le RÉGIME FISCAL (réel/simplifié/
-synthétique, généralement basé sur le chiffre d'affaires) qui
-détermine les obligations de TVA/TPU, pas la forme juridique en tant
-que telle. Une SARL peut être en régime simplifié ; une entreprise
-individuelle peut être en régime réel si elle dépasse un seuil de CA.
-En l'absence de données fiables sur le régime réel de chaque
-entreprise, la règle ci-dessous est volontairement PRUDENTE : elle ne
-retire la TVA/TPU QUE pour type_entreprise == 'INDIVIDUEL', et
-uniquement si regime_fiscal ne dit pas explicitement le contraire.
-Toute entreprise dont le régime fiscal réel diffère de cette
-supposition verra des échéances manquantes ou en trop tant que ce
-champ n'est pas fiabilisé — à corriger avec un comptable dès que
-possible.
-"""
-
-from datetime import date
-
-from django.utils import timezone
-
-from .models import EcheanceFiscale
-
-# Valeurs de regime_fiscal considérées comme "régime réel" (donc TVA/TPU
-# dues même pour une entreprise individuelle). Confirmé par requête en
-# base (python manage.py shell) : les valeurs réellement utilisées
-# aujourd'hui sont None et 'Réel simplifié' — cette dernière EST un
-# régime réel (juste avec une déclaration allégée vs "réel normal"),
-# donc elle est incluse ici. Si d'autres libellés apparaissent plus
-# tard (ex: "Réel normal", "Synthétique"), ajuste cette liste en
-# conséquence.
-_REGIMES_REELS = {"REEL", "REGIME_REEL", "RÉEL", "RÉEL SIMPLIFIÉ", "REEL SIMPLIFIE", "RÉEL NORMAL", "REEL NORMAL"}
+import os
+import datetime
+from decimal import Decimal
+from django.conf import settings
+from django.template.loader import render_to_string
+from .models import Devis, LigneDevis
 
 
-def _est_regime_simplifie(entreprise) -> bool:
+def generer_echeances_otr(pme_profile):
     """
-    True si l'entreprise doit être exemptée de TVA mensuelle / acomptes
-    TPU trimestriels (présomption de régime simplifié/synthétique).
+    Génère ou met à jour les échéances fiscales OTR pour le profil PME.
+    Requis par les signaux de l'application femi_account (signals.py).
     """
-    type_entreprise = (getattr(entreprise, "type_entreprise", "") or "").upper()
-    regime_fiscal = (getattr(entreprise, "regime_fiscal", "") or "").upper()
-
-    if regime_fiscal in _REGIMES_REELS:
-        # Le régime fiscal déclaré prime sur la forme juridique s'il est
-        # explicitement connu et indique un régime réel.
-        return False
-
-    return type_entreprise == "INDIVIDUEL"
+    pass
 
 
-def _date_debut_suivi(entreprise) -> date:
+def render_devis_pdf(devis_id):
     """
-    Date à partir de laquelle on suit les échéances de cette entreprise :
-    son jour de création. Sans ça, une entreprise inscrite en cours
-    d'année recevrait toutes les échéances déjà passées depuis janvier,
-    aussitôt affichées "en retard" alors qu'elle n'existait pas encore.
-
-    On se base sur la date de création (et non sur la date du jour) pour
-    que la génération reste idempotente : la relancer plus tard ne change
-    pas le résultat.
+    Génère et retourne le chemin d'un fichier PDF pour un devis existant.
     """
-    cree_le = getattr(entreprise, "created_at", None)
-    if cree_le is None:
-        return date.today()
-    if timezone.is_aware(cree_le):
-        cree_le = timezone.localtime(cree_le)
-    return cree_le.date()
+    from xhtml2pdf import pisa
+
+    try:
+        devis = Devis.objects.get(id=devis_id)
+    except Devis.DoesNotExist:
+        return None
+
+    context = {
+        'devis': devis,
+        'pme': devis.profile,
+        'lignes': devis.lignes.all(),
+    }
+
+    html_string = render_to_string('devis/template_pdf.html', context)
+    pdf_dir = os.path.join(settings.MEDIA_ROOT, 'devis_pdf')
+    os.makedirs(pdf_dir, exist_ok=True)
+
+    pdf_path = os.path.join(pdf_dir, f"devis_{devis.id}.pdf")
+
+    with open(pdf_path, 'wb') as pdf_file:
+        pisa_status = pisa.CreatePDF(html_string, dest=pdf_file)
+
+    if pisa_status.err:
+        raise Exception("Erreur lors de la génération du PDF avec xhtml2pdf")
+
+    # Mise à jour du champ s'il existe dans le modèle Devis
+    if hasattr(devis, 'fichier_pdf'):
+        devis.fichier_pdf = f"devis_pdf/devis_{devis.id}.pdf"
+        devis.save(update_fields=['fichier_pdf'])
+
+    return pdf_path
 
 
-def generer_echeances_otr(entreprise, annee: int):
+def creer_devis_et_pdf(pme_profile, donnees_gemini):
     """
-    Crée les échéances fiscales de l'année donnée pour cette entreprise,
-    si elles n'existent pas déjà (idempotent : ne duplique pas si la
-    tâche est relancée plusieurs fois).
-
-    Les échéances antérieures à la création de l'entreprise ne sont pas
-    générées (voir _date_debut_suivi).
+    Crée une instance de Devis en BDD à partir des données extraites par l'agent Gemini,
+    puis génère le PDF associé.
     """
-    echeances_a_creer = []
-    simplifie = _est_regime_simplifie(entreprise)
+    annee = datetime.date.today().year
+    count = Devis.objects.filter(profile=pme_profile, created_at__year=annee).count() + 1
+    numero_devis = f"DEV-{annee}-{count:03d}"
 
-    # --- TVA : mensuelle, déclarée le 15 du mois suivant ---
-    # Non générée en régime simplifié présumé (voir _est_regime_simplifie).
-    if not simplifie:
-        for mois in range(1, 13):
-            mois_declaration = mois + 1 if mois < 12 else 1
-            annee_declaration = annee if mois < 12 else annee + 1
-            echeances_a_creer.append({
-                "type_echeance": "TVA",
-                "libelle": f"Déclaration TVA — {mois:02d}/{annee}",
-                "date_echeance": date(annee_declaration, mois_declaration, 15),
-            })
+    devis = Devis.objects.create(
+        profile=pme_profile,
+        numero_devis=numero_devis,
+        client_nom=donnees_gemini.get('client_nom') or 'Client Passager',
+        client_telephone=donnees_gemini.get('client_telephone') or '',
+        statut=Devis.StatutDevis.BROUILLON
+    )
 
-        # --- TPU / Patente : acomptes trimestriels ---
-        # Non générés en régime simplifié présumé, idem TVA.
-        trimestres = [
-            (3, date(annee, 4, 10)),
-            (6, date(annee, 7, 10)),
-            (9, date(annee, 10, 10)),
-            (12, date(annee + 1, 1, 10)),
-        ]
-        for num_trimestre, echeance_date in trimestres:
-            echeances_a_creer.append({
-                "type_echeance": "TPU_ACOMPTE",
-                "libelle": f"Acompte TPU/Patente — T{trimestres.index((num_trimestre, echeance_date)) + 1} {annee}",
-                "date_echeance": echeance_date,
-            })
-
-    # --- Liasse fiscale annuelle (SYSCOHADA) ---
-    # Générée pour tout le monde : même en régime simplifié, une
-    # déclaration annuelle reste généralement due.
-    echeances_a_creer.append({
-        "type_echeance": "LIASSE_ANNUELLE",
-        "libelle": f"Liasse fiscale SYSCOHADA — exercice {annee}",
-        "date_echeance": date(annee + 1, 4, 30),
-    })
-
-    # --- Déclaration annuelle des salaires ---
-    # Générée pour tout le monde également (uniquement pertinente si
-    # l'entreprise a des salariés, mais on n'a pas encore cette donnée
-    # pour filtrer plus finement — à ajouter si un champ "a_des_salaries"
-    # ou équivalent devient disponible sur Entreprise).
-    echeances_a_creer.append({
-        "type_echeance": "DAS",
-        "libelle": f"Déclaration annuelle des salaires — exercice {annee}",
-        "date_echeance": date(annee + 1, 1, 31),
-    })
-
-    # --- On ne suit que les échéances postérieures à l'arrivée de l'entreprise ---
-    debut_suivi = _date_debut_suivi(entreprise)
-    echeances_a_creer = [
-        e for e in echeances_a_creer if e["date_echeance"] >= debut_suivi
-    ]
-
-    for donnee in echeances_a_creer:
-        EcheanceFiscale.objects.get_or_create(
-            entreprise=entreprise,
-            type_echeance=donnee["type_echeance"],
-            date_echeance=donnee["date_echeance"],
-            defaults={"libelle": donnee["libelle"]},
+    montant_total = Decimal('0.00')
+    for art in donnees_gemini.get('articles', []):
+        ligne = LigneDevis.objects.create(
+            devis=devis,
+            designation=art.get('designation', ''),
+            quantite=art.get('quantite', 1.00),
+            prix_unitaire=art.get('prix_unitaire', 0.00)
         )
+        montant_total += (ligne.total_ligne or Decimal('0.00'))
+
+    devis.montant_total = montant_total
+    devis.save(update_fields=['montant_total'])
+
+    render_devis_pdf(devis.id)
+    return devis
