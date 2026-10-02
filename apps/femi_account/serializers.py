@@ -78,7 +78,8 @@ class RegisterSerializer(serializers.Serializer):
             statut='EN_ATTENTE'
         )
 
-        return user
+        #return user
+        return user, abonnement
 
 
 class PublicLoginSerializer(serializers.Serializer):

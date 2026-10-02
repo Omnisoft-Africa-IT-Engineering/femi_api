@@ -272,7 +272,7 @@ class DevisListCreateView(generics.ListCreateAPIView):
         # Récupère uniquement les devis liés à la PME de l'utilisateur connecté
         return Devis.objects.filter(profile__user=self.request.user)
 
-    def perform_create(serializer):
+    def perform_create(self, serializer):
         # Attache automatiquement le devis au profil PME de l'utilisateur
         pme_profile = self.request.user.pme_profile
         serializer.save(profile=pme_profile)
@@ -296,3 +296,9 @@ class DevisPDFView(APIView):
 
 
 
+class DevisDetailView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = DevisSerializer
+
+    def get_queryset(self):
+        return Devis.objects.filter(profile__user=self.request.user)

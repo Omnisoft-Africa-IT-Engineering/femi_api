@@ -46,3 +46,5 @@ urlpatterns = [
     # 5. Router (Échéances Fiscales)
     path('', include(router.urls)),
 ]
+
+path('devis/<int:pk>/', DevisDetailView.as_view(), name='devis-detail'),
