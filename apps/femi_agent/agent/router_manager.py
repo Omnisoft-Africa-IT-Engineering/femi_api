@@ -32,6 +32,8 @@ from apps.femi_account.models import (
     PieceJustificative,
     Utilisateur,
 )
+from apps.femi_agent.agent.response_writer import write_natural_reply
+
 
 from apps.femi_agent.agent.accounting_executor import AccountingExecutor
 from apps.femi_agent.agent.customer_executor import CustomerExecutor
@@ -1195,53 +1197,151 @@ class FemiRouterManager:
         return f"{formatted} {devise}"
 
     @classmethod
-    def _summarize_accounting_transactions(cls, result: AccountingExtractionResult) -> list[str]:
-        lines = []
-        for txn in result.transactions:
-            label = cls._TRANSACTION_TYPE_LABELS.get(txn.transaction_type, txn.transaction_type)
-            montant = cls._format_montant(txn.amount_ttc, txn.currency)
-            extra = f" ({txn.category})" if txn.category else ""
-            contact = f" — {txn.contact}" if txn.contact else ""
-            statut = getattr(txn, "statut_paiement", "PAYE")
-            avance = getattr(txn, "montant_deja_paye", None)
-            if (
-                statut == "CREDIT"
-                and avance
-                and txn.amount_ttc
-                and 0 < avance < txn.amount_ttc
-                and txn.transaction_type in ("RECETTE", "DEPENSE")
-            ):
-                reste = cls._format_montant(txn.amount_ttc - avance, txn.currency)
-                deja = cls._format_montant(avance, txn.currency)
-                if txn.transaction_type == "RECETTE":
-                    lines.append(
-                        f"✅ Vente de {montant}{extra}{contact} enregistrée.\n"
-                        f"Avance reçue : {deja}. Il reste {reste} à encaisser."
+    def _summarize_accounting_transactions(
+            cls, result: AccountingExtractionResult
+        ) -> list[str]:
+            if not result.transactions:
+                return []
+
+            fact_lines: list[str] = []
+            fallback_lines: list[str] = []
+
+            for txn in result.transactions:
+                label = cls._TRANSACTION_TYPE_LABELS.get(
+                    txn.transaction_type, txn.transaction_type
+                )
+                montant = cls._format_montant(txn.amount_ttc, txn.currency)
+                extra = f" ({txn.category})" if txn.category else ""
+                contact = f" — {txn.contact}" if txn.contact else ""
+
+                # Description métier (ex: "2 sacs de riz", "carburant Zem")
+                raw_desc = (getattr(txn, "description", None) or "").strip()
+                desc_fact = raw_desc if raw_desc else "n/a"
+                desc_fallback = f" — {raw_desc}" if raw_desc else ""
+
+                statut = getattr(txn, "statut_paiement", "PAYE")
+                avance = getattr(txn, "montant_deja_paye", None)
+                payment_method = getattr(txn, "payment_method", None)
+                payment_method_str = (
+                    payment_method.value
+                    if hasattr(payment_method, "value")
+                    else (str(payment_method) if payment_method else "n/a")
+                )
+                date_op = getattr(txn, "date_operation", None)
+
+                # ---- faits structurés pour le LLM ----
+                fact = (
+                    f"- type: {label}; montant_ttc: {montant}; "
+                    f"description: {desc_fact}; "
+                    f"categorie: {txn.category or 'n/a'}; "
+                    f"contact: {txn.contact or 'n/a'}; "
+                    f"mode_paiement: {payment_method_str}; "
+                    f"date: {date_op or 'n/a'}; "
+                    f"statut_paiement: {statut}"
+                )
+                if avance is not None:
+                    fact += (
+                        f"; montant_deja_paye: "
+                        f"{cls._format_montant(avance, txn.currency)}"
+                    )
+                    if (
+                        txn.amount_ttc is not None
+                        and avance is not None
+                        and 0 < float(avance) < float(txn.amount_ttc)
+                    ):
+                        reste = cls._format_montant(
+                            txn.amount_ttc - avance, txn.currency
+                        )
+                        fact += f"; reste_a_payer_ou_encaisser: {reste}"
+                elif statut == "CREDIT" and txn.amount_ttc is not None:
+                    fact += f"; reste_a_payer_ou_encaisser: {montant}"
+                fact_lines.append(fact)
+
+                # ---- fallback template (si LLM down) ----
+                # Ordre lisible : type + description + montant + contact
+                if (
+                    statut == "CREDIT"
+                    and avance is not None
+                    and txn.amount_ttc is not None
+                    and 0 < float(avance) < float(txn.amount_ttc)
+                    and txn.transaction_type in ("RECETTE", "DEPENSE")
+                ):
+                    reste = cls._format_montant(
+                        txn.amount_ttc - avance, txn.currency
+                    )
+                    deja = cls._format_montant(avance, txn.currency)
+                    if txn.transaction_type == "RECETTE":
+                        fallback_lines.append(
+                            f"✅ Vente{desc_fallback} de {montant}{extra}{contact} enregistrée.\n"
+                            f"Avance reçue : {deja}. Il reste {reste} à encaisser."
+                        )
+                    else:
+                        fallback_lines.append(
+                            f"✅ Achat{desc_fallback} de {montant}{extra}{contact} enregistré.\n"
+                            f"Avance versée : {deja}. Il reste {reste} à payer."
+                        )
+                elif statut == "CREDIT" and txn.transaction_type == "RECETTE":
+                    fallback_lines.append(
+                        f"✅ Vente à crédit{desc_fallback} de {montant}{extra}{contact} enregistrée.\n"
+                        f"Créance client : {montant} restent à encaisser."
+                    )
+                elif statut == "CREDIT" and txn.transaction_type == "DEPENSE":
+                    fallback_lines.append(
+                        f"✅ Achat à crédit{desc_fallback} de {montant}{extra}{contact} enregistré.\n"
+                        f"Dette fournisseur : {montant} restent à payer."
                     )
                 else:
-                    lines.append(
-                        f"✅ Achat de {montant}{extra}{contact} enregistré.\n"
-                        f"Avance versée : {deja}. Il reste {reste} à payer."
-                    )
-            elif statut == "CREDIT" and txn.transaction_type == "RECETTE":
-                lines.append(
-                    f"✅ Vente à crédit de {montant}{extra}{contact} enregistrée.\n"
-                    f"Créance client : {montant} restent à encaisser."
-                )
-            elif statut == "CREDIT" and txn.transaction_type == "DEPENSE":
-                lines.append(
-                    f"✅ Achat à crédit de {montant}{extra}{contact} enregistré.\n"
-                    f"Dette fournisseur : {montant} restent à payer."
-                )
-            else:
-                lines.append(f"✅ {label} de {montant}{extra}{contact} enregistrée.")
-        return lines
+                    # Evite "Recette de 15 000 — 2 sacs — enregistrée"
+                    # → "Recette — 2 sacs de riz — 15 000 FCFA enregistrée."
+                    if raw_desc:
+                        fallback_lines.append(
+                            f"✅ {label}{desc_fallback} : {montant}{extra}{contact} enregistrée."
+                        )
+                    else:
+                        fallback_lines.append(
+                            f"✅ {label} de {montant}{extra}{contact} enregistrée."
+                        )
+
+            facts = (
+                "Opération(s) comptable(s) enregistrée(s) avec succès :\n"
+                + "\n".join(fact_lines)
+                + "\n\nIntègre la description dans la phrase de confirmation "
+                "quand elle est pertinente (pas 'n/a')."
+            )
+            fallback = "\n".join(fallback_lines)
+
+            natural = write_natural_reply(
+                facts=facts,
+                reply_type="accounting_success",
+                fallback=fallback,
+                temperature=0.7,
+            )
+            return [natural]
 
     @classmethod
     def _summarize_customer_payment(cls, result: CustomerExtractionOutput) -> str:
         montant = cls._format_montant(result.amount_ttc, result.currency)
         contact = result.contact or "ce contact"
-        return f"✅ Paiement de {montant} enregistré pour {contact}."
+        raw_desc = (getattr(result, "description", None) or "").strip()
+        desc_fallback = f" ({raw_desc})" if raw_desc else ""
+
+        fallback = (
+            f"✅ Paiement de {montant}{desc_fallback} enregistré pour {contact}."
+        )
+        facts = (
+            f"Paiement client/fournisseur enregistré avec succès.\n"
+            f"- montant: {montant}\n"
+            f"- contact: {contact}\n"
+            f"- description: {raw_desc or 'n/a'}\n"
+            f"- currency: {result.currency or 'FCFA'}"
+        )
+        return write_natural_reply(
+            facts=facts,
+            reply_type="customer_payment_success",
+            fallback=fallback,
+            temperature=0.7,
+        )
+
 
     @staticmethod
     def _summarize_propose_change(result: AccountingModifyProposeChangeResult) -> str:
