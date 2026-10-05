@@ -6,6 +6,8 @@ from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
 from django.contrib.auth import authenticate
+from drf_spectacular.utils import extend_schema_field
+from drf_spectacular.types import OpenApiTypes
 
 from .models import (
     Utilisateur,
@@ -14,6 +16,8 @@ from .models import (
     Abonnement,
     EcheanceFiscale,
     PieceJustificative,
+    Devis,
+    LigneDevis,
 )
 
 
@@ -39,7 +43,7 @@ class RegisterSerializer(serializers.Serializer):
         if attrs['password'] != attrs['confirm_password']:
             raise serializers.ValidationError({"confirm_password": "Les mots de passe ne correspondent pas."})
         if Utilisateur.objects.filter(email=attrs['email']).exists():
-            raise serializers.ValidationError({"email": "Cet e-mail est d??j?? utilis??."})
+            raise serializers.ValidationError({"email": "Cet e-mail est déjà utilisé."})
         return attrs
 
     @transaction.atomic
@@ -133,6 +137,7 @@ class EcheanceFiscaleSerializer(serializers.ModelSerializer):
             "pieces_justificatives",
         ]
 
+    @extend_schema_field(OpenApiTypes.OBJECT)
     def get_pieces_justificatives(self, obj):
         pieces = PieceJustificative.objects.filter(
             operation__in=obj.operations.all()
@@ -148,3 +153,51 @@ class EcheanceFiscaleSerializer(serializers.ModelSerializer):
             }
             for piece in pieces
         ]
+
+
+# ... (tes autres sérialiseurs RegisterSerializer, PublicLoginSerializer, EcheanceFiscaleSerializer) ...
+
+
+class LigneDevisSerializer(serializers.ModelSerializer):
+    """Serializer pour les lignes individuelles d'un devis."""
+    class Meta:
+        model = LigneDevis
+        fields = ['id', 'designation', 'quantite', 'prix_unitaire', 'montant_total']
+        read_only_fields = ['id', 'montant_total']
+
+
+class DevisSerializer(serializers.ModelSerializer):
+    """Serializer complet pour afficher un devis avec ses lignes."""
+    lignes = LigneDevisSerializer(many=True, read_only=True)
+    client_nom = serializers.CharField(source='client.nom', read_only=True)
+
+    class Meta:
+        model = Devis
+        fields = [
+            'id', 'numero_devis', 'client', 'client_nom', 
+            'date_emission', 'date_validite', 'statut', 
+            'montant_ht', 'montant_tva', 'montant_ttc', 'lignes'
+        ]
+        read_only_fields = ['id', 'numero_devis', 'montant_ht', 'montant_tva', 'montant_ttc']
+
+
+class DevisCreateSerializer(serializers.ModelSerializer):
+    """Serializer pour créer un devis avec ses lignes en POST."""
+    lignes = LigneDevisSerializer(many=True)
+
+    class Meta:
+        model = Devis
+        fields = ['client', 'date_emission', 'date_validite', 'lignes']
+
+    @transaction.atomic
+    def create(self, validated_data):
+        lignes_data = validated_data.pop('lignes')
+        # Récupère automatiquement l'entreprise de l'utilisateur connecté
+        entreprise = self.context['request'].user.entreprise
+        
+        devis = Devis.objects.create(entreprise=entreprise, **validated_data)
+        
+        for ligne_data in lignes_data:
+            LigneDevis.objects.create(devis=devis, **ligne_data)
+            
+        return devis

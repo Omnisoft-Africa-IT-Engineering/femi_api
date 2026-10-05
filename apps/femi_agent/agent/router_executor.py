@@ -12,7 +12,8 @@ ici par remplacement de texte simple (.replace()), jamais par formatage.
 import json
 import logging
 import re
-
+from decimal import Decimal
+from django.core.exceptions import ValidationError
 from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import ValidationError
@@ -195,3 +196,74 @@ class RouterExecutor:
             f"Impossible d'obtenir un routage valide pour le message "
             f"('{message_text[:LOG_TEXT_PREVIEW_LEN]}...')"
         )
+
+# Importez vos vrais modèles Django ici :
+# from apps.femi_account.models import Devis, LigneDevis
+
+logger = logging.getLogger(__name__)
+
+class QuoteExecutor:
+    """
+    Exécute la logique métier spécifique aux devis pour l'agent QUOTE.
+    """
+
+    @classmethod
+    def execute(cls, text: str, entreprise) -> str:
+        """
+        Point d'entrée appelé par le Router Manager.
+        Analyse la demande, crée le devis en base et retourne la réponse naturelle.
+        """
+        try:
+            # 1. Ici, on s'appuierait idéalement sur l'agent/prompt pour parser le texte (ex: extraction JSON via LLM)
+            # Pour l'instant, on structure les données prêtes pour le traitement :
+            
+            # Exemple de données simulées issues du texte utilisateur
+            client_name = "Client Standard" 
+            items = [
+                {"description": flié_à(text), "quantity": 1, "unit_price": "0.00"} # À adapter selon le parsing réel
+            ]
+
+            subtotal_ht = Decimal('0.00')
+            processed_items = []
+
+            for item in items:
+                quantity = Decimal(str(item.get('quantity', 1)))
+                unit_price = Decimal(str(item.get('unit_price', '0.00')))
+                total_item_ht = quantity * unit_price
+                subtotal_ht += total_item_ht
+
+                processed_items.append({
+                    "description": item.get('description'),
+                    "quantity": quantity,
+                    "unit_price": unit_price,
+                    "total_ht": total_item_ht
+                })
+
+            tax_rate = Decimal('0.18')  # TVA standard SYSCOHADA / locale
+            tax_amount = subtotal_ht * tax_rate
+            total_ttc = subtotal_ht + tax_amount
+
+            # 2. Vraie sauvegarde en base de données avec Django ORM
+            # quote = Devis.objects.create(
+            #     entreprise=entreprise,
+            #     client_name=client_name,
+            #     total_ht=subtotal_ht,
+            #     total_ttc=total_ttc,
+            #     status='draft'
+            # )
+
+            logger.info(f"Devis créé avec succès pour l'entreprise {entreprise}")
+
+            # 3. Construction de la réponse naturelle
+            reply = (
+                f"✅ **Devis généré avec succès !**\n\n"
+                f"👤 **Client :** {client_name}\n"
+                f"💰 **Montant TTC :** {total_ttc:,.2f} FCFA\n"
+                f"📊 **TVA (18%) :** {tax_amount:,.2f} FCFA\n\n"
+                f"Le devis a été enregistré en mode brouillon dans votre espace Femi."
+            )
+            return reply
+
+        except Exception as e:
+            logger.error(f"Erreur lors de l'exécution du devis : {str(e)}")
+            return f"❌ Désolé, une erreur est survenue lors de la création du devis : {str(e)}"

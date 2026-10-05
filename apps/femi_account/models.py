@@ -4,6 +4,7 @@ from django.contrib.auth.models import AbstractUser
 import random
 from datetime import timedelta
 from django.utils import timezone
+from decimal import Decimal
 
 
 class Utilisateur(AbstractUser):
@@ -903,3 +904,129 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"{self.utilisateur} — {self.titre}"
+
+
+
+# Fonction utilitaire pour générer une référence unique non séquentielle
+# Exemple de rendu : DEV-A1B2C3D4 (évite les simples 1, 2, 3...)
+def generer_reference_devis():
+    return f"DEV-{uuid.uuid4().hex[:8].upper()}"
+
+class Devis(models.Model):
+    """
+    Modèle représentant l'en-tête et les informations globales d'un devis.
+    """
+    
+    # Choix possibles pour l'état d'avancement du devis
+    STATUT_CHOICES = [
+        ('BROUILLON', 'Brouillon'),
+        ('VALIDE', 'Validé'),
+        ('FACTURE', 'Transformé en Facture'),
+        ('ANNULE', 'Annulé'),
+    ]
+
+    # Identifiant unique infalsifiable et non séquentiel
+    reference = models.CharField(
+        max_length=50, 
+        unique=True, 
+        editable=False, 
+        default=generer_reference_devis
+    )
+    
+    # Entreprise émettrice du devis (liée au module existant)
+    entreprise = models.ForeignKey(
+        'Entreprise', 
+        on_delete=models.CASCADE, 
+        related_name='devis'
+    )
+    
+    # Client destinataire du devis (lié au modèle Contact existant)
+    client = models.ForeignKey(
+        'Contact', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name='devis'
+    )
+    
+    # Dates clés du document
+    date_emission = models.DateField(auto_now_add=True)  # Date de création automatique
+    date_validite = models.DateField(null=True, blank=True) # Date limite de validité du devis
+    
+    # Montants et statuts
+    montant_total = models.DecimalField(
+        max_digits=12, 
+        decimal_places=2, 
+        default=Decimal('0.00')
+    )
+    statut = models.CharField(
+        max_length=20, 
+        choices=STATUT_CHOICES, 
+        default='BROUILLON'
+    )
+    
+    # Horodatages de suivi
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Devis {self.reference} - {self.entreprise.nom if self.entreprise else 'N/A'}"
+
+    def calculer_total(self):
+        """
+        Méthode pour recalculer automatiquement le montant total du devis 
+        en additionnant les montants de toutes ses lignes associées.
+        """
+        total = sum(ligne.montant_total for ligne in self.lignes.all())
+        self.montant_total = total
+        self.save(update_fields=['montant_total'])
+
+
+class LigneDevis(models.Model):
+    """
+    Modèle représentant un article ou un service détaillé au sein d'un devis.
+    """
+    
+    # Lien vers le devis parent (si le devis est supprimé, ses lignes le sont aussi)
+    devis = models.ForeignKey(
+        Devis, 
+        on_delete=models.CASCADE, 
+        related_name='lignes'
+    )
+    
+    # Description textuelle du produit ou service facturé
+    description = models.TextField(help_text="Description du produit ou service")
+    
+    # Quantité commandée
+    quantite = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2, 
+        default=Decimal('1.00')
+    )
+    
+    # Prix unitaire de l'article
+    prix_unitaire = models.DecimalField(
+        max_digits=12, 
+        decimal_places=2, 
+        default=Decimal('0.00')
+    )
+    
+    # Montant total de la ligne (Quantité x Prix Unitaire)
+    montant_total = models.DecimalField(
+        max_digits=12, 
+        decimal_places=2, 
+        default=Decimal('0.00')
+    )
+
+    def save(self, *args, **kwargs):
+        """
+        Surcharge de la méthode save pour automatiser deux actions :
+        1. Calculer le montant total de la ligne en cours.
+        2. Déclencher le recalcul automatique du total global du devis parent.
+        """
+        self.montant_total = self.quantite * self.prix_unitaire
+        super().save(*args, **kwargs)
+        self.devis.calculer_total()
+
+    def __str__(self):
+        return f"{self.description} ({self.quantite} x {self.prix_unitaire})"

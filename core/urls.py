@@ -17,7 +17,6 @@ Including another URLconf
 """
 URL configuration for core project.
 """
-
 from django.contrib import admin
 from django.urls import path, include
 from drf_spectacular.views import (
@@ -30,7 +29,7 @@ from apps.femi_account import views_cron
 
 urlpatterns = [
     # 🛠️ Interface d'administration Django
-    # path('admin/', admin.site.urls),
+    path('admin/', admin.site.urls),
     
     # 📄 OpenAPI Schema & Documentation Swagger
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
@@ -47,8 +46,4 @@ urlpatterns = [
 
     path('internal/cron/rappels-echeances/', views_cron.cron_rappels_echeances, name='cron-rappels-echeances'),
     path('internal/cron/generer-echeances/', views_cron.cron_generer_echeances, name='cron-generer-echeances'),
-
-
-    
-
 ]

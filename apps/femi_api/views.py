@@ -2,7 +2,14 @@ from datetime import datetime
 from decimal import Decimal
 import io
 import logging
+from rest_framework import generics, permissions
 
+from django.http import FileResponse
+from apps.femi_account.models import Devis
+from apps.femi_account.services import PDFQuoteService
+from .serializers import DevisSerializer # Ton sérialiseur existant
+# from apps.femi_account.services import PDFQuoteService # Ton service PDF
+from drf_spectacular.utils import extend_schema
 from django.contrib.auth import authenticate
 from django.db import connection, transaction
 from django.db.models import Q, Sum
@@ -2037,3 +2044,47 @@ class TranscrireAudioAPIView(APIView):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
+
+
+# 1. Lister et Créer les devis
+class DevisListCreateView(generics.ListCreateAPIView):
+    queryset = Devis.objects.all()
+    serializer_class = DevisSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        # Retourne uniquement les devis de l'entreprise de l'utilisateur connecté
+        return Devis.objects.filter(entreprise=self.request.user.entreprise)
+
+    def perform_create(self, serializer):
+        # Associe automatiquement l'entreprise lors de la création
+        serializer.save(entreprise=self.request.user.entreprise)
+
+# 2. Voir, Modifier ou Supprimer un devis spécifique
+class DevisDetailView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = DevisSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return Devis.objects.filter(entreprise=self.request.user.entreprise)
+
+# 3. Télécharger le PDF (celui qu'on a validé juste avant)
+class DownloadQuotePDFView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk, format=None):
+        try:
+            devis = Devis.objects.get(pk=pk, entreprise=request.user.entreprise)
+        except Devis.DoesNotExist:
+            return Response({"error": "Devis introuvable."}, status=404)
+
+        pdf_buffer = PDFQuoteService.generate_quote_pdf(devis)
+
+        return FileResponse(
+            pdf_buffer,
+            as_attachment=True,
+            filename=f"Devis_{devis.reference}.pdf",
+            content_type='application/pdf'
+        )

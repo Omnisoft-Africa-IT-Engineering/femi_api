@@ -20,6 +20,10 @@ from apps.femi_api.views import (
     BalanceGeneraleAPIView,
     BalanceAuxiliaireAPIView,
     ConfigAPIView,
+    DevisListCreateView,
+    DevisDetailView,
+    DownloadQuotePDFView
+
 )
 
 urlpatterns = [
@@ -43,4 +47,13 @@ urlpatterns = [
     path('auth/link-whatsapp/request/', LinkWhatsAppRequestAPIView.as_view(), name='api_link_whatsapp_request'),
     path('auth/link-whatsapp/confirm/', LinkWhatsAppConfirmAPIView.as_view(), name='api_link_whatsapp_confirm'),
     path('transcrire-audio/', TranscrireAudioAPIView.as_view(), name='api_transcrire_audio'),
+    path('devis/', DevisListCreateView.as_view(), name='devis-list-create'),
+    path('devis/<int:pk>/', DevisDetailView.as_view(), name='devis-detail'),
+    path('api/devis/<int:pk>/pdf/', DownloadQuotePDFView.as_view(), name='download-quote-pdf'),
+
 ]
+
+
+
+   
+

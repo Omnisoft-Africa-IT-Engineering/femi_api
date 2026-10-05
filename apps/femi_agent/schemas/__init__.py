@@ -40,7 +40,6 @@ from .router import (
     RouterIntent,
     RouterOutput,
     RouterProcessResult,
-    
 )
 
 from .accounting_modify import (
@@ -77,6 +76,15 @@ from .stt import (
     UncertainSegmentSchema,
     SttPostProcessingResult,
 )
+
+# Ajout des schémas de devis
+from .quote import (
+    LigneDevisSchema,
+    QuoteExtractionResult,
+    QuoteExtractionLLMResult,
+    LigneDevisSchema
+)
+
 __all__ = [
     # ollama_gbnf_extraction.py (ancien pipeline)
     "PaymentMethodEnum",
@@ -96,39 +104,37 @@ __all__ = [
     "AccountingExtractionResult",
     "AccountingTransactionLLMSchema",
     "AccountingExtractionLLMResult",
-    
-    
-        # router.py (sortie structurée du ROUTER_PROMPT)
+    # router.py (sortie structurée du ROUTER_PROMPT)
     "RouterAgent",
     "RouterActionType",
     "RouterIntent",
     "RouterOutput",
     "RouterProcessResult",
-    
-     # tool_loop.py (pattern boucle-avec-tools : FINANCIAL_ANALYST, sous-flux READ de CUSTOMER)
+    # tool_loop.py (pattern boucle-avec-tools)
     "ToolCallSchema",
     "ToolSelectionOutput",
     "FinalAnswerOutput",
     "ValidationOutput",
     "CustomerExtractionOutput",
     "CustomerFirstStepOutput",
-    
-    
-        # accounting_modify.py (sortie structurée d'ACCOUNTING_MODIFY_PROMPT)
+    # accounting_modify.py
     "SearchCriteria",
     "OperationCandidate",
     "AccountingModifySearchResult",
     "AccountingModifyResolutionResult",
     "AccountingModifyProposeChangeResult",
     "AccountingModifyResult",
-    # ocr.py (sortie structurée d'OCR_PROMPT)
+    # ocr.py
     "OcrEnTeteSchema",
     "OcrLigneArticleSchema",
     "OcrTotauxSchema",
     "OcrExtractionResult",
-    # stt.py (sortie structurée de STT_PROMPT)
+    # stt.py
     "UncertainSegmentType",
     "SttConfidence",
     "UncertainSegmentSchema",
     "SttPostProcessingResult",
+    # quote.py (nouveau module devis)
+    "LigneDevisSchema",
+    "QuoteExtractionResult",
 ]

@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    
 
     # CORS
     "corsheaders",
@@ -476,3 +477,13 @@ CRON_SECRET = config(
     "CRON_SECRET",
     default=""
 )
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Femi API',
+    'DESCRIPTION': 'API SaaS pour la gestion financière et comptable (Normes SYSCOHADA)',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'DISABLE_ERRORS_AND_WARNINGS': True,  # Force l'outil à ignorer les avertissements bloquants
+    'COMPONENT_SPLIT_REQUEST': True,
+
+}

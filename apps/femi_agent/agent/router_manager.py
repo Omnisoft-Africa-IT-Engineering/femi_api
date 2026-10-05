@@ -22,6 +22,7 @@ RouterProcessResult
 
 import logging
 from typing import Optional, Tuple
+from apps.femi_agent.agent.quote_executor import QuoteExecutor
 
 from asgiref.sync import sync_to_async
 
@@ -1050,6 +1051,12 @@ class FemiRouterManager:
                     False,
                 ),
             )
+
+ 
+        if intent.agent == "QUOTE":
+            result = QuoteExecutor.execute(text, entreprise)
+            return result, getattr(result, "needs_clarification", False)
+        
 
         logger.warning(
             "[FemiRouterManager] "
@@ -2630,3 +2637,5 @@ class FemiRouterManager:
                     "l'opération %s",
                     operation.id,
                 )
+
+

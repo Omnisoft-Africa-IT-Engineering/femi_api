@@ -26,6 +26,14 @@ possible.
 
 from datetime import date
 
+from io import BytesIO
+from decimal import Decimal
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import cm
+
 from django.utils import timezone
 
 from .models import EcheanceFiscale
@@ -148,3 +156,144 @@ def generer_echeances_otr(entreprise, annee: int):
             date_echeance=donnee["date_echeance"],
             defaults={"libelle": donnee["libelle"]},
         )
+
+
+
+
+class PDFQuoteService:
+    """
+    Service de génération de devis au format PDF pour Femi (Conforme SYSCOHADA / PME).
+    """
+
+    @staticmethod
+    def generate_quote_pdf(devis_instance) -> BytesIO:
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=A4,
+            rightMargin=2 * cm,
+            leftMargin=2 * cm,
+            topMargin=2 * cm,
+            bottomMargin=2 * cm
+        )
+        
+        elements = []
+        styles = getSampleStyleSheet()
+        
+        title_style = ParagraphStyle(
+            'TitleStyle',
+            parent=styles['Heading1'],
+            fontSize=22,
+            textColor=colors.HexColor('#1E3A8A'),
+            spaceAfter=6
+        )
+        
+        normal_style = styles['Normal']
+        bold_style = ParagraphStyle(
+            'BoldStyle',
+            parent=normal_style,
+            fontName='Helvetica-Bold'
+        )
+
+        company_name = getattr(devis_instance.entreprise, 'name', 'Femi Enterprise')
+        company_info = getattr(devis_instance.entreprise, 'address', 'Lomé, Togo')
+        
+        header_data = [
+            [
+                Paragraph(f"<b>{company_name}</b><br/>{company_info}", normal_style),
+                Paragraph(f"<b>DEVIS N° :</b> {devis_instance.reference}<br/>"
+                          f"<b>Date :</b> {devis_instance.created_at.strftime('%d/%m/%Y')}<br/>"
+                          f"<b>Statut :</b> {devis_instance.get_status_display()}", normal_style)
+            ]
+        ]
+        header_table = Table(header_data, colWidths=[9 * cm, 8 * cm])
+        header_table.setStyle(TableStyle([
+            ('VALIGN', (0,0), (-1,-1), 'TOP'),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 10),
+        ]))
+        elements.append(header_table)
+        elements.append(Spacer(1, 1 * cm))
+
+        client_name = getattr(devis_instance.client, 'name', 'Client Comptant')
+        client_address = getattr(devis_instance.client, 'address', '')
+        
+        client_data = [
+            [Paragraph("<b>Facturer à :</b>", bold_style)],
+            [Paragraph(f"<b>{client_name}</b><br/>{client_address}", normal_style)]
+        ]
+        client_table = Table(client_data, colWidths=[17 * cm])
+        client_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F3F4F6')),
+            ('PADDING', (0,0), (-1,-1), 10),
+            ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ]))
+        elements.append(client_table)
+        elements.append(Spacer(1, 1 * cm))
+
+        table_data = [
+            [
+                Paragraph("<b>Description</b>", bold_style),
+                Paragraph("<b>Qté</b>", bold_style),
+                Paragraph("<b>P.U. (FCFA)</b>", bold_style),
+                Paragraph("<b>Total HT (FCFA)</b>", bold_style)
+            ]
+        ]
+        
+        lines = devis_instance.lignes.all() if hasattr(devis_instance, 'lignes') else []
+        for line in lines:
+            table_data.append([
+                Paragraph(line.description, normal_style),
+                str(line.quantity),
+                f"{line.unit_price:,.2f}",
+                f"{line.total_ht:,.2f}"
+            ])
+            
+        item_table = Table(table_data, colWidths=[8 * cm, 2 * cm, 3.5 * cm, 3.5 * cm])
+        item_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#E5E7EB')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.HexColor('#111827')),
+            ('ALIGN', (1,0), (-1,-1), 'CENTER'),
+            ('ALIGN', (3,0), (-1,-1), 'RIGHT'),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+            ('TOPPADDING', (0,0), (-1,-1), 6),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#D1D5DB')),
+        ]))
+        elements.append(item_table)
+        elements.append(Spacer(1, 0.5 * cm))
+
+        subtotal_ht = getattr(devis_instance, 'total_ht', 0)
+        tax_amount = subtotal_ht * Decimal('0.18')
+        total_ttc = subtotal_ht + tax_amount
+
+        totals_data = [
+            ["Total HT :", f"{subtotal_ht:,.2f} FCFA"],
+            ["TVA (18%) :", f"{tax_amount:,.2f} FCFA"],
+            ["Total TTC :", f"{total_ttc:,.2f} FCFA"]
+        ]
+        
+        totals_table = Table(totals_data, colWidths=[13 * cm, 4 * cm])
+        totals_table.setStyle(TableStyle([
+            ('ALIGN', (0,0), (0,-1), 'RIGHT'),
+            ('ALIGN', (1,0), (1,-1), 'RIGHT'),
+            ('FONTNAME', (0,-1), (-1,-1), 'Helvetica-Bold'),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+        ]))
+        elements.append(totals_table)
+        elements.append(Spacer(1, 2 * cm))
+
+        footer_data = [
+            [
+                Paragraph("<b>Cachet et Signature :</b>", normal_style),
+                Paragraph("<b>Bon pour accord (Client) :</b>", normal_style)
+            ]
+        ]
+        footer_table = Table(footer_data, colWidths=[8.5 * cm, 8.5 * cm])
+        footer_table.setStyle(TableStyle([
+            ('VALIGN', (0,0), (-1,-1), 'TOP'),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 40),
+        ]))
+        elements.append(footer_table)
+
+        doc.build(elements)
+        buffer.seek(0)
+        return buffer

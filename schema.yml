@@ -1,0 +1,1687 @@
+openapi: 3.0.3
+info:
+  title: Femi API
+  version: 1.0.0
+  description: API SaaS pour la gestion financière et comptable (Normes SYSCOHADA)
+paths:
+  /api/auth/echeances-fiscales/:
+    get:
+      operationId: auth_echeances_fiscales_list
+      description: |-
+        Liste / détail / mise à jour des échéances fiscales de l'entreprise
+        de l'utilisateur connecté. Pas de create/delete manuel : les
+        échéances sont générées par la tâche Celery annuelle.
+      tags:
+      - auth
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EcheanceFiscale'
+          description: ''
+  /api/auth/echeances-fiscales/{id}/:
+    get:
+      operationId: auth_echeances_fiscales_retrieve
+      description: |-
+        Liste / détail / mise à jour des échéances fiscales de l'entreprise
+        de l'utilisateur connecté. Pas de create/delete manuel : les
+        échéances sont générées par la tâche Celery annuelle.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this Échéance Fiscale.
+        required: true
+      tags:
+      - auth
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EcheanceFiscale'
+          description: ''
+    put:
+      operationId: auth_echeances_fiscales_update
+      description: |-
+        Liste / détail / mise à jour des échéances fiscales de l'entreprise
+        de l'utilisateur connecté. Pas de create/delete manuel : les
+        échéances sont générées par la tâche Celery annuelle.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this Échéance Fiscale.
+        required: true
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EcheanceFiscaleRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/EcheanceFiscaleRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/EcheanceFiscaleRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EcheanceFiscale'
+          description: ''
+    patch:
+      operationId: auth_echeances_fiscales_partial_update
+      description: |-
+        Liste / détail / mise à jour des échéances fiscales de l'entreprise
+        de l'utilisateur connecté. Pas de create/delete manuel : les
+        échéances sont générées par la tâche Celery annuelle.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this Échéance Fiscale.
+        required: true
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedEcheanceFiscaleRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedEcheanceFiscaleRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedEcheanceFiscaleRequest'
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EcheanceFiscale'
+          description: ''
+  /api/auth/echeances-fiscales/{id}/marquer_paye/:
+    patch:
+      operationId: auth_echeances_fiscales_marquer_paye_partial_update
+      description: POST /echeances-fiscales/{id}/marquer_paye/ — marque l'échéance
+        comme payée.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this Échéance Fiscale.
+        required: true
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedEcheanceFiscaleRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedEcheanceFiscaleRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedEcheanceFiscaleRequest'
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EcheanceFiscale'
+          description: ''
+  /api/auth/kpi/:
+    get:
+      operationId: auth_kpi_retrieve
+      tags:
+      - auth
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/auth/notifications/:
+    get:
+      operationId: auth_notifications_list
+      description: Les 100 dernières notifications de l'utilisateur, plus récentes
+        d'abord.
+      tags:
+      - auth
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Notification'
+          description: ''
+  /api/auth/notifications/{notification_id}/lue/:
+    post:
+      operationId: auth_notifications_lue_create
+      parameters:
+      - in: path
+        name: notification_id
+        schema:
+          type: string
+          format: uuid
+        required: true
+      tags:
+      - auth
+      security:
+      - tokenAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/auth/notifications/appareils/:
+    post:
+      operationId: auth_notifications_appareils_create
+      description: |-
+        POST   {token, plateforme} : enregistre (ou réassigne) le token FCM
+                                     après connexion et à chaque renouvellement.
+        DELETE {token}             : à appeler à la déconnexion, pour ne plus
+                                     recevoir de push sur cet appareil.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppareilNotificationInputRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/AppareilNotificationInputRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/AppareilNotificationInputRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      responses:
+        '201':
+          description: No response body
+        '204':
+          description: No response body
+    delete:
+      operationId: auth_notifications_appareils_destroy
+      description: |-
+        POST   {token, plateforme} : enregistre (ou réassigne) le token FCM
+                                     après connexion et à chaque renouvellement.
+        DELETE {token}             : à appeler à la déconnexion, pour ne plus
+                                     recevoir de push sur cet appareil.
+      tags:
+      - auth
+      security:
+      - tokenAuth: []
+      responses:
+        '201':
+          description: No response body
+        '204':
+          description: No response body
+  /api/auth/notifications/non-lues/:
+    get:
+      operationId: auth_notifications_non_lues_retrieve
+      description: Pour la pastille de la cloche.
+      tags:
+      - auth
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+          description: ''
+  /api/auth/notifications/tout-lire/:
+    post:
+      operationId: auth_notifications_tout_lire_create
+      tags:
+      - auth
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  marquees:
+                    type: integer
+          description: ''
+  /api/auth/public/google-login/:
+    post:
+      operationId: auth_public_google_login_create
+      description: |-
+        Vérifie un ID Token Google.
+
+        - Si l'utilisateur existe déjà :
+            -> connexion directe avec JWT.
+
+        - Si l'utilisateur n'existe pas :
+            -> NE crée PAS encore de compte.
+            -> retourne les informations Google à Flutter afin que
+               l'utilisateur puisse compléter le formulaire d'inscription.
+
+        Body attendu :
+        {
+            "id_token": "<token JWT fourni par Google Sign-In>"
+        }
+
+        Réponse nouvel utilisateur :
+        {
+            "message": "Compte Google non encore créé.",
+            "is_new_user": true,
+            "google_data": {
+                "email": "...",
+                "full_name": "..."
+            }
+        }
+
+        Réponse utilisateur existant :
+        {
+            "message": "Connexion Google réussie.",
+            "is_new_user": false,
+            "tokens": {
+                "refresh": "...",
+                "access": "..."
+            }
+        }
+      tags:
+      - auth
+      security:
+      - tokenAuth: []
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/auth/public/login/:
+    post:
+      operationId: auth_public_login_create
+      description: Login public (JWT) avec email/password.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenObtainPairRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TokenObtainPairRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TokenObtainPairRequest'
+        required: true
+      security:
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenObtainPair'
+          description: ''
+  /api/auth/public/signup/:
+    post:
+      operationId: auth_public_signup_create
+      description: Inscription classique par Email / Mot de passe avec création d'entreprise
+        intégrée.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      - {}
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Register'
+          description: ''
+  /api/v1/agent/chat/:
+    post:
+      operationId: v1_agent_chat_create
+      tags:
+      - v1
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/api/devis/{id}/pdf/:
+    get:
+      operationId: v1_api_devis_pdf_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/auth/deactivate/:
+    post:
+      operationId: v1_auth_deactivate_create
+      description: Désactive le compte de l'utilisateur authentifié (is_active=False)
+        et supprime son token.
+      summary: Désactiver son compte
+      tags:
+      - v1
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/auth/link-whatsapp/confirm/:
+    post:
+      operationId: v1_auth_link_whatsapp_confirm_create
+      description: 'Étape 2 : Confirmation de la liaison WhatsApp.'
+      summary: Confirmer la liaison WhatsApp avec le code OTP
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                demande_id:
+                  type: string
+                code:
+                  type: string
+                  example: '123456'
+              required:
+              - demande_id
+              - code
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/auth/link-whatsapp/request/:
+    post:
+      operationId: v1_auth_link_whatsapp_request_create
+      description: Envoie un code OTP par WhatsApp au numéro fourni.
+      summary: Demander la liaison d'un numéro WhatsApp
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                telephone_whatsapp:
+                  type: string
+                  example: '+22900000001'
+              required:
+              - telephone_whatsapp
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/auth/logout/:
+    post:
+      operationId: v1_auth_logout_create
+      description: Supprime le token DRF courant de l'utilisateur authentifié.
+      summary: Se déconnecter
+      tags:
+      - v1
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/auth/register/:
+    post:
+      operationId: v1_auth_register_create
+      description: Crée une entreprise et son utilisateur associé, puis renvoie un
+        token DRF.
+      summary: Créer un compte (Entreprise + Utilisateur)
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                  example: komi_services
+                password:
+                  type: string
+                  example: motdepasse123
+                nom_entreprise:
+                  type: string
+                  example: Komi Services SARL
+                email:
+                  type: string
+                  example: contact@komi.tg
+                nom_complet:
+                  type: string
+                  example: Jean-Baptiste Komi
+                telephone_whatsapp:
+                  type: string
+                  example: '+22890000000'
+                secteur_nom:
+                  type: string
+                  example: Commerce
+                devise:
+                  type: string
+                  example: XOF
+                type_entreprise:
+                  type: string
+                  example: SARL
+              required:
+              - username
+              - password
+              - nom_entreprise
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '409':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/auth/token/:
+    post:
+      operationId: v1_auth_token_create
+      description: Authentifie un utilisateur et renvoie un token DRF.
+      summary: Se connecter et obtenir un token
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                  example: test_api
+                password:
+                  type: string
+                  example: test1234
+              required:
+              - username
+              - password
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/balance-auxiliaire/:
+    get:
+      operationId: v1_balance_auxiliaire_retrieve
+      description: Renvoie les soldes réels par contact pour l'exercice demandé.
+      summary: Balance auxiliaire (soldes par client/fournisseur)
+      parameters:
+      - in: query
+        name: annee
+        schema:
+          type: integer
+        description: Exercice comptable (année courante par défaut).
+      tags:
+      - v1
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/balance-generale/:
+    get:
+      operationId: v1_balance_generale_retrieve
+      description: Renvoie une balance construite depuis les catégories réellement
+        utilisées, pour l'exercice demandé.
+      summary: Balance générale (par catégorie réelle)
+      parameters:
+      - in: query
+        name: annee
+        schema:
+          type: integer
+        description: Exercice comptable (année courante par défaut).
+      tags:
+      - v1
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/bilan/synthese/:
+    get:
+      operationId: v1_bilan_synthese_retrieve
+      description: Renvoie CA, résultat net, marge et trésorerie (TTC) pour une année
+        donnée, avec état de disponibilité par poste.
+      summary: Synthèse annuelle du bilan
+      parameters:
+      - in: query
+        name: annee
+        schema:
+          type: integer
+        description: Année (année courante par défaut)
+      tags:
+      - v1
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/config/:
+    get:
+      operationId: v1_config_retrieve
+      description: Renvoie des valeurs de configuration non sensibles pour le frontend.
+      summary: Configuration publique (numéro WhatsApp, etc.)
+      tags:
+      - v1
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/dashboard/kpis/:
+    get:
+      operationId: v1_dashboard_kpis_retrieve
+      description: |-
+        2. ENDPOINT KPIS DASHBOARD (GET)
+        Fournit l'ensemble des indicateurs financiers du tableau de bord.
+        Tous les calculs viennent de apps.femi_account.kpi_service.
+      tags:
+      - v1
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/devis/:
+    get:
+      operationId: v1_devis_list
+      tags:
+      - v1
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Devis'
+          description: ''
+    post:
+      operationId: v1_devis_create
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DevisRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/DevisRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/DevisRequest'
+      security:
+      - tokenAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Devis'
+          description: ''
+  /api/v1/devis/{id}/:
+    get:
+      operationId: v1_devis_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Devis'
+          description: ''
+    put:
+      operationId: v1_devis_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DevisRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/DevisRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/DevisRequest'
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Devis'
+          description: ''
+    patch:
+      operationId: v1_devis_partial_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedDevisRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedDevisRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedDevisRequest'
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Devis'
+          description: ''
+    delete:
+      operationId: v1_devis_destroy
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - tokenAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/v1/etat-financier/:
+    get:
+      operationId: v1_etat_financier_retrieve
+      description: Renvoie un bilan cumulé jusqu'à la fin de l'exercice demandé (année
+        courante par défaut).
+      summary: État financier simplifié (bilan)
+      parameters:
+      - in: query
+        name: annee
+        schema:
+          type: integer
+        description: Exercice comptable — le bilan est calculé cumulativement jusqu'au
+          31/12 de cette année (année courante par défaut).
+      tags:
+      - v1
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/grand-livre/:
+    get:
+      operationId: v1_grand_livre_retrieve
+      description: Renvoie une vue par compte (Clients/Trésorerie/Achats) avec solde
+        et derniers mouvements.
+      summary: Grand livre simplifié (comptes, soldes, mouvements)
+      tags:
+      - v1
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/health/:
+    get:
+      operationId: v1_health_retrieve
+      description: Endpoint public de healthcheck.
+      summary: Vérifier l'état de l'API
+      tags:
+      - v1
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/kpi/{numero}/:
+    get:
+      operationId: v1_kpi_retrieve
+      description: Renvoie les KPI du niveau demandé, filtrés par secteur, avec valeur
+        calculée si disponible.
+      summary: KPI d'un niveau donné (catalogue Kpi)
+      parameters:
+      - in: path
+        name: numero
+        schema:
+          type: integer
+        required: true
+      - in: query
+        name: period
+        schema:
+          type: string
+          enum:
+          - last_month
+          - this_month
+          - this_year
+          - today
+          default: this_month
+      tags:
+      - v1
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/registre-journalier/:
+    get:
+      operationId: v1_registre_journalier_retrieve
+      description: |-
+        7. ENDPOINT REGISTRE JOURNALIER (GET)
+        Renvoie les écritures et les totaux pour une plage de dates donnée.
+        Paramètres query : date_debut, date_fin (format YYYY-MM-DD).
+      summary: Registre journalier (écritures + totaux sur une plage de dates)
+      parameters:
+      - in: query
+        name: date_debut
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: date_fin
+        schema:
+          type: string
+          format: date
+      tags:
+      - v1
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/transactions/batch/:
+    post:
+      operationId: v1_transactions_batch_create
+      description: Synchronise plusieurs transactions saisies hors-ligne.
+      summary: Soumettre des transactions par lot
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchTransactionPayloadRequest'
+        required: true
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/transactions/export/:
+    get:
+      operationId: v1_transactions_export_retrieve
+      description: Génère un export financier.
+      summary: Exporter les opérations (PDF ou Excel)
+      parameters:
+      - in: query
+        name: date_from
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: date_to
+        schema:
+          type: string
+          format: date
+      - in: query
+        name: export_format
+        schema:
+          type: string
+          enum:
+          - pdf
+          - xlsx
+          default: xlsx
+        description: Format du fichier exporté
+      tags:
+      - v1
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: string
+                format: binary
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '404':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/transactions/process/:
+    post:
+      operationId: v1_transactions_process_create
+      description: Point d'entrée unique du routeur Femi pour analyser et router les
+        messages.
+      summary: Traiter une transaction entrante (Texte, Image, Audio)
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransactionPayloadRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TransactionPayloadRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TransactionPayloadRequest'
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/transcrire-audio/:
+    post:
+      operationId: v1_transcrire_audio_create
+      description: |-
+        ENDPOINT TRANSCRIPTION AUDIO (POST)
+        Reçoit un fichier audio et renvoie le texte transcrit.
+      tags:
+      - v1
+      security:
+      - tokenAuth: []
+      responses:
+        '200':
+          description: No response body
+components:
+  schemas:
+    AppareilNotificationInputRequest:
+      type: object
+      properties:
+        token:
+          type: string
+          minLength: 1
+          maxLength: 512
+        plateforme:
+          default: ''
+          oneOf:
+          - $ref: '#/components/schemas/PlateformeEnum'
+          - $ref: '#/components/schemas/BlankEnum'
+      required:
+      - token
+    BatchTransactionItemRequest:
+      type: object
+      description: Un élément d'une soumission par lot (texte uniquement — pas d'image/audio
+        en lot pour l'instant).
+      properties:
+        text:
+          type: string
+          minLength: 1
+        source:
+          allOf:
+          - $ref: '#/components/schemas/SourceEnum'
+          default: MOBILE
+        client_ref:
+          type: string
+      required:
+      - text
+    BatchTransactionPayloadRequest:
+      type: object
+      description: Validation d'une soumission par lot (app mobile hors-ligne -> sync).
+      properties:
+        transactions:
+          type: array
+          items:
+            $ref: '#/components/schemas/BatchTransactionItemRequest'
+      required:
+      - transactions
+    BlankEnum:
+      enum:
+      - ''
+    Devis:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        reference:
+          type: string
+          readOnly: true
+        entreprise:
+          type: string
+          format: uuid
+          readOnly: true
+        client:
+          type: string
+          format: uuid
+          nullable: true
+        client_nom:
+          type: string
+          readOnly: true
+        date_emission:
+          type: string
+          format: date
+          readOnly: true
+        date_validite:
+          type: string
+          format: date
+          nullable: true
+        montant_total:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+          readOnly: true
+        statut:
+          $ref: '#/components/schemas/DevisStatutEnum'
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+        lignes:
+          type: array
+          items:
+            $ref: '#/components/schemas/LigneDevis'
+          readOnly: true
+      required:
+      - client_nom
+      - created_at
+      - date_emission
+      - entreprise
+      - id
+      - lignes
+      - montant_total
+      - reference
+      - updated_at
+    DevisRequest:
+      type: object
+      properties:
+        client:
+          type: string
+          format: uuid
+          nullable: true
+        date_validite:
+          type: string
+          format: date
+          nullable: true
+        statut:
+          $ref: '#/components/schemas/DevisStatutEnum'
+    DevisStatutEnum:
+      enum:
+      - BROUILLON
+      - VALIDE
+      - FACTURE
+      - ANNULE
+      type: string
+      description: |-
+        * `BROUILLON` - Brouillon
+        * `VALIDE` - Validé
+        * `FACTURE` - Transformé en Facture
+        * `ANNULE` - Annulé
+    EcheanceFiscale:
+      type: object
+      description: Serializer des échéances fiscales avec leurs pièces justificatives.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        type_echeance:
+          $ref: '#/components/schemas/TypeEcheanceEnum'
+        libelle:
+          type: string
+          maxLength: 255
+        date_echeance:
+          type: string
+          format: date
+        periode:
+          type: string
+          nullable: true
+          description: Période fiscale au format YYYY-MM
+          maxLength: 7
+        montant_taxe:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        statut:
+          $ref: '#/components/schemas/EcheanceFiscaleStatutEnum'
+        dernier_rappel_envoye:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        date_paiement:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        pieces_justificatives:
+          type: object
+          additionalProperties: {}
+          readOnly: true
+      required:
+      - date_echeance
+      - date_paiement
+      - dernier_rappel_envoye
+      - id
+      - libelle
+      - pieces_justificatives
+      - type_echeance
+    EcheanceFiscaleRequest:
+      type: object
+      description: Serializer des échéances fiscales avec leurs pièces justificatives.
+      properties:
+        type_echeance:
+          $ref: '#/components/schemas/TypeEcheanceEnum'
+        libelle:
+          type: string
+          minLength: 1
+          maxLength: 255
+        date_echeance:
+          type: string
+          format: date
+        periode:
+          type: string
+          nullable: true
+          description: Période fiscale au format YYYY-MM
+          maxLength: 7
+        montant_taxe:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        statut:
+          $ref: '#/components/schemas/EcheanceFiscaleStatutEnum'
+      required:
+      - date_echeance
+      - libelle
+      - type_echeance
+    EcheanceFiscaleStatutEnum:
+      enum:
+      - EN_ATTENTE
+      - RAPPELE
+      - PAYE
+      - EN_RETARD
+      type: string
+      description: |-
+        * `EN_ATTENTE` - En attente
+        * `RAPPELE` - Rappel envoyé
+        * `PAYE` - Payé
+        * `EN_RETARD` - En retard
+    LigneDevis:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        description:
+          type: string
+          description: Description du produit ou service
+        quantite:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+        prix_unitaire:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        montant_total:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+          readOnly: true
+      required:
+      - description
+      - id
+      - montant_total
+    LigneDevisRequest:
+      type: object
+      properties:
+        description:
+          type: string
+          minLength: 1
+          description: Description du produit ou service
+        quantite:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,8}(?:\.\d{0,2})?$
+        prix_unitaire:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+      required:
+      - description
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        titre:
+          type: string
+          maxLength: 150
+        message:
+          type: string
+        palier:
+          oneOf:
+          - $ref: '#/components/schemas/PalierEnum'
+          - $ref: '#/components/schemas/BlankEnum'
+        echeance:
+          type: integer
+          nullable: true
+        lue:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - id
+      - message
+      - titre
+    PalierEnum:
+      enum:
+      - J10
+      - J5
+      - J1
+      - J0
+      - RETARD
+      type: string
+      description: |-
+        * `J10` - 10 jours avant
+        * `J5` - 5 jours avant
+        * `J1` - 1 jour avant
+        * `J0` - Jour J
+        * `RETARD` - Échéance dépassée
+    PatchedDevisRequest:
+      type: object
+      properties:
+        client:
+          type: string
+          format: uuid
+          nullable: true
+        date_validite:
+          type: string
+          format: date
+          nullable: true
+        statut:
+          $ref: '#/components/schemas/DevisStatutEnum'
+    PatchedEcheanceFiscaleRequest:
+      type: object
+      description: Serializer des échéances fiscales avec leurs pièces justificatives.
+      properties:
+        type_echeance:
+          $ref: '#/components/schemas/TypeEcheanceEnum'
+        libelle:
+          type: string
+          minLength: 1
+          maxLength: 255
+        date_echeance:
+          type: string
+          format: date
+        periode:
+          type: string
+          nullable: true
+          description: Période fiscale au format YYYY-MM
+          maxLength: 7
+        montant_taxe:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        statut:
+          $ref: '#/components/schemas/EcheanceFiscaleStatutEnum'
+    PlateformeEnum:
+      enum:
+      - ANDROID
+      - IOS
+      - WEB
+      type: string
+      description: |-
+        * `ANDROID` - Android
+        * `IOS` - iOS
+        * `WEB` - Web
+    Register:
+      type: object
+      description: Inscription utilisateur + entreprise + abonnement.
+      properties:
+        full_name:
+          type: string
+          maxLength: 255
+        email:
+          type: string
+          format: email
+        company_name:
+          type: string
+          maxLength: 255
+        secteur_id:
+          type: string
+          format: uuid
+          nullable: true
+        type_activite:
+          type: string
+          maxLength: 50
+        type_entreprise:
+          type: string
+          maxLength: 50
+        adresse:
+          type: string
+        devise:
+          type: string
+          default: XOF
+        phone_number:
+          type: string
+          maxLength: 50
+        plan_id:
+          type: string
+          format: uuid
+        mode_paiement:
+          type: string
+          maxLength: 50
+      required:
+      - company_name
+      - email
+      - full_name
+      - mode_paiement
+      - plan_id
+      - type_activite
+      - type_entreprise
+    RegisterRequest:
+      type: object
+      description: Inscription utilisateur + entreprise + abonnement.
+      properties:
+        full_name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        email:
+          type: string
+          format: email
+          minLength: 1
+        password:
+          type: string
+          writeOnly: true
+          minLength: 8
+        confirm_password:
+          type: string
+          writeOnly: true
+          minLength: 1
+        company_name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        secteur_id:
+          type: string
+          format: uuid
+          nullable: true
+        type_activite:
+          type: string
+          minLength: 1
+          maxLength: 50
+        type_entreprise:
+          type: string
+          minLength: 1
+          maxLength: 50
+        adresse:
+          type: string
+        devise:
+          type: string
+          minLength: 1
+          default: XOF
+        phone_number:
+          type: string
+          maxLength: 50
+        plan_id:
+          type: string
+          format: uuid
+        mode_paiement:
+          type: string
+          minLength: 1
+          maxLength: 50
+      required:
+      - company_name
+      - confirm_password
+      - email
+      - full_name
+      - mode_paiement
+      - password
+      - plan_id
+      - type_activite
+      - type_entreprise
+    SourceEnum:
+      enum:
+      - WHATSAPP
+      - MOBILE
+      - API
+      type: string
+      description: |-
+        * `WHATSAPP` - WHATSAPP
+        * `MOBILE` - MOBILE
+        * `API` - API
+    TokenObtainPair:
+      type: object
+      properties:
+        access:
+          type: string
+          readOnly: true
+        refresh:
+          type: string
+          readOnly: true
+      required:
+      - access
+      - refresh
+    TokenObtainPairRequest:
+      type: object
+      properties:
+        username:
+          type: string
+          writeOnly: true
+          minLength: 1
+        password:
+          type: string
+          writeOnly: true
+          minLength: 1
+      required:
+      - password
+      - username
+    TransactionPayloadRequest:
+      type: object
+      description: Validation de la requête entrante.
+      properties:
+        text:
+          type: string
+        image:
+          type: string
+          format: binary
+        audio:
+          type: string
+          format: binary
+        source:
+          allOf:
+          - $ref: '#/components/schemas/SourceEnum'
+          default: API
+    TypeEcheanceEnum:
+      enum:
+      - TVA
+      - TPU_ACOMPTE
+      - LIASSE_ANNUELLE
+      - DAS
+      - AUTRE
+      type: string
+      description: |-
+        * `TVA` - Déclaration TVA (Mensuel)
+        * `TPU_ACOMPTE` - Acompte TPU / Patente (Trimestriel)
+        * `LIASSE_ANNUELLE` - Bilan Annuel / Liasse SYSCOHADA
+        * `DAS` - Déclaration Annuelle des Salaires
+        * `AUTRE` - Autre obligation OTR
+  securitySchemes:
+    tokenAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: Token-based authentication with required prefix "Token"

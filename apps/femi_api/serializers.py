@@ -1,5 +1,7 @@
 from rest_framework import serializers
 from apps.femi_account.models import Operation
+from apps.femi_account.models import Devis, LigneDevis
+from django.db import transaction
 
 class TransactionPayloadSerializer(serializers.Serializer):
     """Validation de la requête entrante."""
@@ -45,3 +47,46 @@ class BatchTransactionPayloadSerializer(serializers.Serializer):
         return value
 
 
+class LigneDevisSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = LigneDevis
+        fields = ['id', 'description', 'quantite', 'prix_unitaire', 'montant_total']
+        read_only_fields = ['id', 'montant_total']
+
+
+class DevisSerializer(serializers.ModelSerializer):
+    lignes = LigneDevisSerializer(many=True, read_only=True)
+    client_nom = serializers.CharField(source='client.nom', read_only=True)
+    
+    class Meta:
+        model = Devis
+        fields = [
+            'id', 'reference', 'entreprise', 'client', 'client_nom', 
+            'date_emission', 'date_validite', 'montant_total', 
+            'statut', 'created_at', 'updated_at', 'lignes'
+        ]
+        read_only_fields = [
+            'id', 'reference', 'entreprise', 'date_emission', 
+            'montant_total', 'created_at', 'updated_at'
+        ]
+
+
+class DevisCreateSerializer(serializers.ModelSerializer):
+    lignes = LigneDevisSerializer(many=True)
+
+    class Meta:
+        model = Devis
+        fields = ['client', 'date_validite', 'lignes']
+
+    @transaction.atomic
+    def create(self, validated_data):
+        lignes_data = validated_data.pop('lignes')
+        entreprise = self.context['request'].user.entreprise
+        
+        devis = Devis.objects.create(entreprise=entreprise, **validated_data)
+        
+        for ligne_data in lignes_data:
+            LigneDevis.objects.create(devis=devis, **ligne_data)
+            
+        devis.calculer_total()
+        return devis
