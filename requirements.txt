@@ -144,3 +144,4 @@ langchain-mistralai
 langchain-google-genai
 onnx-asr[cpu,hub]
 elevenlabs==2.69.0
+reportlab==4.3.1
