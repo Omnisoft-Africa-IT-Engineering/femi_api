@@ -1052,6 +1052,20 @@ Mais :
 - ne complète pas une information manquante ;
 - ne transforme pas une hypothèse en fait.
 
+Si le message contient un bloc "[CONTRÔLE DU DOCUMENT]" :
+
+- ce bloc a été produit automatiquement à partir d'un document scanné ;
+- s'il indique des incohérences entre des montants (lignes, total HT, TVA,
+  total TTC, acompte, reste à payer), ne choisis pas toi-même le bon montant
+  et n'utilise pas silencieusement un montant concerné par l'incohérence ;
+- si l'incohérence touche le montant total de l'opération :
+  amount_ttc = null, needs_clarification = true et missing_fields doit
+  contenir "amount_ttc" ;
+- s'il indique que le contrôle des montants est cohérent, utilise les
+  montants normalement ;
+- le bloc "[TEXTE BRUT DU DOCUMENT — référence]" sert uniquement de
+  référence pour ce que les informations structurées ne contiennent pas.
+
 ==================================================
 13. CHECK_OPEN_DEBT ET CHECK_OPEN_LOAN
 ==================================================

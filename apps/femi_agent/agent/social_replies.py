@@ -4,7 +4,10 @@ Messages « sociaux » de Femi : salutations, remerciements, au revoir,
 sujet.
 
 Module volontairement isolé (Python pur, aucun appel LLM, aucune
-dépendance Django) : réponse instantanée, identique et testable.
+dépendance Django) : classification instantanée et testable. Les textes
+`build_*` ci-dessous servent de réponse de SECOURS ; la réponse réellement
+envoyée est rédigée de façon naturelle par response_writer.py à partir des
+faits de `social_reply_context()`.
 
 Principe de sécurité : un message n'est « social » que si TOUS ses mots
 appartiennent à un vocabulaire fermé de politesse, et s'il ne contient
@@ -187,6 +190,43 @@ def build_social_reply(text: str, hour: int) -> str:
         f"financier.{bien}\n\nVoici ce que je peux faire pour toi :\n"
         f"{_ROLE_LIST}\n\nQu'est-ce que je peux faire pour toi ?"
     )
+
+
+_REPLY_TYPE_BY_KIND = {
+    GREETING: "social_greeting",
+    IDENTITY: "social_identity",
+    THANKS: "social_thanks",
+    BYE: "social_bye",
+}
+
+CAPABILITIES_FACTS = (
+    "Ce que Femi sait faire : enregistrer ventes, dépenses et prêts (par "
+    "message, par vocal, ou avec une photo ou un PDF de facture) ; suivre les "
+    "clients qui doivent de l'argent ; donner le chiffre d'affaires, les "
+    "dépenses, le bénéfice ou la trésorerie ; modifier ou annuler une "
+    "opération déjà enregistrée."
+)
+
+
+def social_reply_context(text: str, hour: int) -> tuple[str, str]:
+    """(reply_type, facts) à donner à response_writer.write_natural_reply()
+    pour rédiger une réponse naturelle à un message social."""
+    kind = classify_social_message(text) or GREETING
+    tokens = _normalize(text or "")
+
+    facts = [
+        f"Moment de la journée : {'matin / après-midi' if hour < 18 else 'soir'} "
+        f"(salutation adaptée : {_salutation(hour)}).",
+        f"Message de l'utilisateur : {(text or '').strip()[:200]}",
+    ]
+    if kind in (GREETING, IDENTITY):
+        facts.append(CAPABILITIES_FACTS)
+    if kind == GREETING and _asks_wellbeing(tokens):
+        facts.append(
+            "L'utilisateur demande de tes nouvelles : réponds brièvement que "
+            "tu vas bien."
+        )
+    return _REPLY_TYPE_BY_KIND[kind], "\n".join(facts)
 
 
 def build_off_topic_reply(rng: Optional[random.Random] = None) -> str:

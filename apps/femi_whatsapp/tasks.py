@@ -17,6 +17,8 @@ from django.core.files.base import ContentFile
 
 from apps.femi_account.models import Utilisateur
 from apps.femi_agent.agent.router_manager import FemiRouterManager
+from apps.femi_agent.agent.response_writer import write_natural_reply
+from apps.femi_agent.parsers.document_loader import detect_mime
 from apps.femi_whatsapp.whatsapp_client import WhatsAppClient
 
 logger = logging.getLogger(__name__)
@@ -24,6 +26,20 @@ logger = logging.getLogger(__name__)
 
 def _normalize_phone(raw_number: str) -> str:
     return raw_number if raw_number.startswith("+") else f"+{raw_number}"
+
+
+def _send_notice(client, to: str, facts: str, fallback: str) -> None:
+    """Avis court à l'utilisateur, rédigé naturellement (texte fixe
+    `fallback` si le rédacteur échoue ou dépasse 8 s)."""
+    client.send_text_message(
+        to,
+        write_natural_reply(
+            facts=facts,
+            reply_type="error_user_action",
+            fallback=fallback,
+            timeout=8.0,
+        ),
+    )
 
 
 @shared_task(
@@ -73,7 +89,36 @@ def process_whatsapp_message_task(self, message: dict) -> None:
         media_id = message.get("image", {}).get("id")
         media = client.download_media(media_id) if media_id else None
         if media is None:
-            client.send_text_message(from_number, "⚠️ Impossible de récupérer l'image envoyée. Réessaie.")
+            _send_notice(
+                client, from_number,
+                "L'image envoyée n'a pas pu être récupérée. L'utilisateur peut la renvoyer.",
+                "⚠️ Impossible de récupérer l'image envoyée. Réessaie.",
+            )
+            return
+        router_kwargs["image_bytes"] = media.content
+
+    elif message_type == "document":
+        # Facture envoyée comme fichier : PDF, ou photo envoyée "en tant que
+        # document" (qualité d'origine). Le format réel est détecté sur les
+        # octets ; le pipeline OCR (image_bytes) accepte images et PDF.
+        media_id = message.get("document", {}).get("id")
+        media = client.download_media(media_id) if media_id else None
+        if media is None:
+            _send_notice(
+                client, from_number,
+                "Le document envoyé n'a pas pu être récupéré. L'utilisateur peut le renvoyer.",
+                "⚠️ Impossible de récupérer le document envoyé. Réessaie.",
+            )
+            return
+        if detect_mime(media.content) is None:
+            _send_notice(
+                client, from_number,
+                "Le fichier envoyé n'est pas dans un format que Femi sait lire. "
+                "Formats acceptés : images (JPEG, PNG, WebP) et PDF. "
+                "L'utilisateur peut renvoyer sa facture dans l'un de ces formats.",
+                "⚠️ Je ne sais lire que les images (JPEG, PNG, WebP) et les PDF. "
+                "Envoie-moi la facture dans l'un de ces formats.",
+            )
             return
         router_kwargs["image_bytes"] = media.content
 
@@ -81,7 +126,11 @@ def process_whatsapp_message_task(self, message: dict) -> None:
         media_id = message.get("audio", {}).get("id")
         media = client.download_media(media_id) if media_id else None
         if media is None:
-            client.send_text_message(from_number, "⚠️ Impossible de récupérer l'audio envoyé. Réessaie.")
+            _send_notice(
+                client, from_number,
+                "Le message vocal n'a pas pu être récupéré. L'utilisateur peut le renvoyer.",
+                "⚠️ Impossible de récupérer l'audio envoyé. Réessaie.",
+            )
             return
         router_kwargs["audio_bytes"] = media.content
 

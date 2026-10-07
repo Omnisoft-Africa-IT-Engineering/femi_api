@@ -59,6 +59,7 @@ from apps.femi_agent.agent.social_replies import (
     build_off_topic_reply,
     build_social_reply,
     classify_social_message,
+    social_reply_context,
 )
 from django.utils import timezone
 
@@ -67,6 +68,16 @@ from apps.femi_account.integrations.supabase_storage import upload_file
 from apps.femi_agent.agent.ocr_executor import (
     OcrExecutor,
     OcrExecutionError,
+)
+
+from apps.femi_agent.agent.ocr_postprocess import (
+    build_document_text,
+    extract_control_anomalies,
+)
+from apps.femi_agent.parsers.document_loader import (
+    UnsupportedDocumentError,
+    extension_for,
+    detect_mime,
 )
 
 from apps.femi_agent.agent.stt_executor import (
@@ -97,6 +108,11 @@ from apps.femi_agent.schemas import (
 
 
 logger = logging.getLogger(__name__)
+
+# Délais maximaux du rédacteur pour les messages courts (salutations,
+# avis d'erreur) : au-delà, on envoie le texte de secours plutôt que de
+# faire attendre l'utilisateur.
+_SHORT_REPLY_TIMEOUT = 8.0
 
 
 DispatchResult = Optional[
@@ -280,6 +296,25 @@ class FemiRouterManager:
                 message=str(exc),
             )
 
+        except UnsupportedDocumentError as exc:
+
+            logger.warning(
+                "[FemiRouterManager] "
+                "Document non pris en charge (async): %s",
+                exc,
+            )
+
+            return RouterProcessResult(
+                success=False,
+                message=cls._natural_notice(
+                    facts=(
+                        "Le fichier envoyé n'a pas pu être lu : "
+                        f"{exc}"
+                    ),
+                    fallback=str(exc),
+                ),
+            )
+
         except (
             OcrExecutionError,
             SttExecutionError,
@@ -294,9 +329,17 @@ class FemiRouterManager:
 
             return RouterProcessResult(
                 success=False,
-                message=(
-                    "Le traitement de l'image ou de l'audio "
-                    "a échoué."
+                message=cls._natural_notice(
+                    facts=(
+                        "Le traitement de l'image, du PDF ou de l'audio "
+                        "envoyé a échoué (lecture impossible). L'utilisateur "
+                        "peut réessayer avec une photo plus nette, un autre "
+                        "fichier ou un nouveau vocal."
+                    ),
+                    fallback=(
+                        "Le traitement de l'image ou de l'audio "
+                        "a échoué."
+                    ),
                 ),
             )
 
@@ -487,6 +530,25 @@ class FemiRouterManager:
                 message=str(exc),
             )
 
+        except UnsupportedDocumentError as exc:
+
+            logger.warning(
+                "[FemiRouterManager] "
+                "Document non pris en charge (sync): %s",
+                exc,
+            )
+
+            return RouterProcessResult(
+                success=False,
+                message=cls._natural_notice(
+                    facts=(
+                        "Le fichier envoyé n'a pas pu être lu : "
+                        f"{exc}"
+                    ),
+                    fallback=str(exc),
+                ),
+            )
+
         except (
             OcrExecutionError,
             SttExecutionError,
@@ -501,9 +563,17 @@ class FemiRouterManager:
 
             return RouterProcessResult(
                 success=False,
-                message=(
-                    "Le traitement de l'image ou de l'audio "
-                    "a échoué."
+                message=cls._natural_notice(
+                    facts=(
+                        "Le traitement de l'image, du PDF ou de l'audio "
+                        "envoyé a échoué (lecture impossible). L'utilisateur "
+                        "peut réessayer avec une photo plus nette, un autre "
+                        "fichier ou un nouveau vocal."
+                    ),
+                    fallback=(
+                        "Le traitement de l'image ou de l'audio "
+                        "a échoué."
+                    ),
                 ),
             )
 
@@ -563,22 +633,16 @@ class FemiRouterManager:
                 image_bytes
             )
 
-            if ocr_result.texte_brut_complet:
-
-                parts.append(
-                    ocr_result.texte_brut_complet
+            # Informations structurées + contrôle des montants +
+            # texte brut en référence (voir ocr_postprocess.py)
+            readable_text = (
+                cls._ocr_result_to_readable_text(
+                    ocr_result
                 )
+            )
 
-            else:
-
-                readable_text = (
-                    cls._ocr_result_to_readable_text(
-                        ocr_result
-                    )
-                )
-
-                if readable_text:
-                    parts.append(readable_text)
+            if readable_text:
+                parts.append(readable_text)
 
         # --------------------------------------------------------
         # AUDIO / STT
@@ -624,89 +688,7 @@ class FemiRouterManager:
         ocr_result,
     ) -> str:
 
-        lines: list[str] = []
-
-        en_tete = ocr_result.en_tete
-
-        if en_tete.nom_commercant:
-            lines.append(
-                f"Commerçant : "
-                f"{en_tete.nom_commercant}"
-            )
-
-        if en_tete.numero_facture_recu:
-            lines.append(
-                f"Référence : "
-                f"{en_tete.numero_facture_recu}"
-            )
-
-        if en_tete.date:
-            lines.append(
-                f"Date : {en_tete.date}"
-            )
-
-        for ligne in ocr_result.lignes_articles:
-
-            if not ligne.designation:
-                continue
-
-            detail = ligne.designation
-
-            if ligne.quantite:
-
-                detail += (
-                    f" (quantité : "
-                    f"{ligne.quantite}"
-                )
-
-                if ligne.prix_unitaire:
-
-                    detail += (
-                        f", prix unitaire : "
-                        f"{ligne.prix_unitaire}"
-                    )
-
-                detail += ")"
-
-            if ligne.prix_total:
-
-                detail += (
-                    f" — total : "
-                    f"{ligne.prix_total}"
-                )
-
-            lines.append(detail)
-
-        totaux = ocr_result.totaux
-
-        if totaux.total_ht:
-
-            lines.append(
-                f"Total HT : "
-                f"{totaux.total_ht}"
-            )
-
-        if totaux.tva:
-
-            lines.append(
-                f"TVA : {totaux.tva}"
-            )
-
-        if totaux.total_ttc:
-
-            lines.append(
-                f"Total TTC : "
-                f"{totaux.total_ttc}"
-            )
-
-        if totaux.moyen_de_paiement:
-
-            lines.append(
-                f"Moyen de paiement : "
-                f"{totaux.moyen_de_paiement}"
-            )
-
-        return "\n".join(lines)
+        return build_document_text(ocr_result)
 
     # ============================================================
     # VERSION ASYNCHRONE DU TEXTE
@@ -739,22 +721,16 @@ class FemiRouterManager:
                 image_bytes
             )
 
-            if ocr_result.texte_brut_complet:
-
-                parts.append(
-                    ocr_result.texte_brut_complet
+            # Informations structurées + contrôle des montants +
+            # texte brut en référence (voir ocr_postprocess.py)
+            readable_text = (
+                cls._ocr_result_to_readable_text(
+                    ocr_result
                 )
+            )
 
-            else:
-
-                readable_text = (
-                    cls._ocr_result_to_readable_text(
-                        ocr_result
-                    )
-                )
-
-                if readable_text:
-                    parts.append(readable_text)
+            if readable_text:
+                parts.append(readable_text)
 
         # --------------------------------------------------------
         # AUDIO / STT
@@ -1163,9 +1139,45 @@ class FemiRouterManager:
     @staticmethod
     def _greeting_result(text: str = "") -> RouterProcessResult:
         hour = timezone.localtime().hour
+        reply_type, facts = social_reply_context(text, hour)
         return RouterProcessResult(
             success=True,
-            message=build_social_reply(text, hour),
+            message=write_natural_reply(
+                facts=facts,
+                reply_type=reply_type,
+                user_message=text,
+                fallback=build_social_reply(text, hour),
+                timeout=_SHORT_REPLY_TIMEOUT,
+            ),
+        )
+
+    @staticmethod
+    def _natural_notice(facts: str, fallback: str, user_message: str = "") -> str:
+        """Avis à l'utilisateur (échec de lecture d'un document, etc.)
+        rédigé naturellement ; `fallback` si le rédacteur échoue."""
+        return write_natural_reply(
+            facts=facts,
+            reply_type="error_user_action",
+            user_message=user_message,
+            fallback=fallback,
+            timeout=_SHORT_REPLY_TIMEOUT,
+        )
+
+    @staticmethod
+    def _natural_off_topic(user_message: str = "") -> str:
+        return write_natural_reply(
+            facts=(
+                "Le message de l'utilisateur n'a pas pu être rattaché à une "
+                "action de Femi (hors sujet ou pas compris).\n"
+                "Ce que Femi sait faire : enregistrer ventes, dépenses et "
+                "prêts ; suivre les clients qui doivent de l'argent ; donner "
+                "chiffre d'affaires, dépenses, bénéfice, trésorerie ; "
+                "modifier ou annuler une opération."
+            ),
+            reply_type="off_topic",
+            user_message=user_message,
+            fallback=build_off_topic_reply(),
+            timeout=_SHORT_REPLY_TIMEOUT,
         )
 
     # ============================================================
@@ -1344,23 +1356,65 @@ class FemiRouterManager:
 
 
     @staticmethod
-    def _summarize_propose_change(result: AccountingModifyProposeChangeResult) -> str:
+    def _format_values_for_facts(values) -> str:
+        if not values:
+            return "n/a"
+        return "; ".join(f"{k}: {v}" for k, v in values.items() if v is not None)
+
+    @classmethod
+    def _summarize_propose_change(
+        cls,
+        result: AccountingModifyProposeChangeResult,
+        user_message: str = "",
+    ) -> str:
         if result.action_type == "DELETE":
-            return (
+            fallback = (
                 f"🗑️ Je propose de supprimer cette opération : {result.current_values}. "
                 "Confirmes-tu ?"
             )
-        return (
-            f"✏️ Je propose de modifier cette opération : {result.proposed_values}. "
-            "Confirmes-tu ?"
+            facts = (
+                "Proposition de SUPPRESSION d'une opération, en attente de "
+                "confirmation de l'utilisateur (rien n'est encore supprimé).\n"
+                f"Opération concernée : {cls._format_values_for_facts(result.current_values)}"
+            )
+        else:
+            fallback = (
+                f"✏️ Je propose de modifier cette opération : {result.proposed_values}. "
+                "Confirmes-tu ?"
+            )
+            facts = (
+                "Proposition de MODIFICATION d'une opération, en attente de "
+                "confirmation de l'utilisateur (rien n'est encore modifié).\n"
+                f"Valeurs actuelles : {cls._format_values_for_facts(result.current_values)}\n"
+                f"Nouvelles valeurs proposées : {cls._format_values_for_facts(result.proposed_values)}"
+            )
+        return write_natural_reply(
+            facts=facts,
+            reply_type="modify_propose",
+            user_message=user_message,
+            fallback=fallback,
         )
 
     @staticmethod
-    def _summarize_candidates(result: AccountingModifyResolutionResult) -> str:
+    def _summarize_candidates(
+        result: AccountingModifyResolutionResult,
+        user_message: str = "",
+    ) -> str:
         if not result.candidates:
             return "Je n'ai trouvé aucune opération correspondante."
         candidats = "\n".join(f"- {c.summary}" for c in result.candidates)
-        return f"Plusieurs opérations correspondent, laquelle veux-tu modifier/supprimer ?\n{candidats}"
+        fallback = f"Plusieurs opérations correspondent, laquelle veux-tu modifier/supprimer ?\n{candidats}"
+        facts = (
+            "Plusieurs opérations correspondent à la demande de "
+            f"{'suppression' if result.action_type == 'DELETE' else 'modification'}. "
+            "L'utilisateur doit dire laquelle.\nCandidates :\n" + candidats
+        )
+        return write_natural_reply(
+            facts=facts,
+            reply_type="modify_candidates",
+            user_message=user_message,
+            fallback=fallback,
+        )
 
     # ------------------------------------------------------------
     # QUESTIONS DE CLARIFICATION (codes missing_fields → français clair)
@@ -1368,8 +1422,9 @@ class FemiRouterManager:
     # Les codes viennent des prompts (ROUTER, ACCOUNTING, ACCOUNTING_MODIFY,
     # CUSTOMER, FINANCIAL_ANALYST). L'utilisateur ne doit JAMAIS voir un nom
     # de champ technique. Ordre = priorité : ce qui bloque l'enregistrement
-    # d'abord. Texte fixe (pas de LLM) : réponse identique et fiable pour
-    # une application comptable.
+    # d'abord. Ces textes servent (1) de FAITS « à demander » donnés au
+    # rédacteur naturel (response_writer.py) et (2) de réponse de secours
+    # si le rédacteur échoue.
     _MISSING_FIELD_QUESTIONS = {
         "transaction_type": "Dis-moi, c'est une vente que tu as faite, ou un achat pour ton activité ? (Si c'est un prêt, précise-le-moi.)",
         "amount_ttc": "Quel est le montant total, s'il te plaît ?",
@@ -1427,8 +1482,61 @@ class FemiRouterManager:
         cls,
         missing_fields: list[str],
         accounting_results=None,
+        user_message: str = "",
     ) -> str | None:
-        """Question(s) en français à partir des codes missing_fields.
+        """Question(s) de précision rédigée(s) naturellement à partir des
+        codes missing_fields. Retourne None s'il n'y a rien à demander.
+
+        Les chiffres cités viennent uniquement du code : récap de ce qui est
+        compris et, pour un document scanné, incohérences détectées (bloc
+        [CONTRÔLE DU DOCUMENT] du message). Texte fixe de secours si le
+        rédacteur échoue."""
+        static = cls._build_static_clarification_message(
+            missing_fields, accounting_results
+        )
+        if static is None:
+            return None
+
+        questions: list[str] = []
+        for code in missing_fields:
+            if code in cls._CLARIFICATION_SKIP_CODES:
+                continue
+            question = cls._MISSING_FIELD_QUESTIONS.get(code)
+            if question and question not in questions:
+                questions.append(question)
+
+        fact_lines = ["Informations à demander à l'utilisateur :"]
+        if questions:
+            fact_lines.extend(f"- {q}" for q in questions[:3])
+        else:
+            fact_lines.append("- Une précision générale : demande-lui d'en dire un peu plus.")
+        recap = cls._build_understood_recap(accounting_results)
+        if recap:
+            fact_lines.append(f"Ce que Femi a déjà compris : {recap}")
+        anomalies = extract_control_anomalies(user_message)
+        if anomalies:
+            fact_lines.append(
+                "Incohérences lues sur le document scanné (rien n'a été "
+                "corrigé ni enregistré) :"
+            )
+            fact_lines.extend(f"- {a}" for a in anomalies)
+
+        return write_natural_reply(
+            facts="\n".join(fact_lines),
+            reply_type="clarification",
+            user_message=user_message,
+            fallback=static,
+        )
+
+    @classmethod
+    def _build_static_clarification_message(
+        cls,
+        missing_fields: list[str],
+        accounting_results=None,
+    ) -> str | None:
+        """Version à texte fixe (réponse de secours) de
+        _build_clarification_message. Question(s) en français à partir des
+        codes missing_fields.
 
         Retourne None s'il n'y a rien à demander. Un code inconnu ne produit
         jamais son nom technique : il est remplacé par une demande générique.
@@ -1467,6 +1575,7 @@ class FemiRouterManager:
         customer_results: list,
         needs_clarification: bool,
         missing_fields: list[str],
+        user_message: str = "",
     ) -> str:
         """Assemble le message réellement envoyé à l'utilisateur (WhatsApp et
         application mobile) à partir des résultats structurés des agents."""
@@ -1492,16 +1601,16 @@ class FemiRouterManager:
         #    ou liste de candidats en cas d'ambiguïté.
         for result in accounting_modify_results:
             if isinstance(result, AccountingModifyProposeChangeResult):
-                lines.append(cls._summarize_propose_change(result))
+                lines.append(cls._summarize_propose_change(result, user_message))
             elif isinstance(result, AccountingModifyResolutionResult) and result.candidates:
-                lines.append(cls._summarize_candidates(result))
+                lines.append(cls._summarize_candidates(result, user_message))
 
         if lines:
             # Une opération du lot peut être enregistrée pendant qu'une autre
             # attend une précision : ne pas perdre la question.
             if needs_clarification:
                 clarification = cls._build_clarification_message(
-                    missing_fields, accounting_results
+                    missing_fields, accounting_results, user_message
                 )
                 if clarification:
                     lines.append(clarification)
@@ -1512,23 +1621,48 @@ class FemiRouterManager:
         #    connu (question hors-sujet, intent SETTINGS/UNKNOWN...).
         if needs_clarification:
             if "fonctionnalite_non_disponible" in missing_fields:
-                return (
-                    "Cette fonctionnalité n'est pas encore disponible chez Femi 🙂\n\n"
-                    "Je peux en revanche t'aider avec :\n"
-                    "• Ton chiffre d'affaires, tes dépenses (avec détail par catégorie), "
-                    "ton bénéfice, ta marge ou ta trésorerie ;\n"
-                    "• Une comparaison entre deux périodes ;\n"
-                    "• Tes créances clients et qui relancer ;\n"
-                    "• Enregistrer, modifier ou supprimer une transaction."
+                return write_natural_reply(
+                    facts=(
+                        "La fonction demandée par l'utilisateur n'est pas "
+                        "encore disponible chez Femi.\n"
+                        "Ce que Femi peut faire à la place : donner chiffre "
+                        "d'affaires, dépenses (détail par catégorie), "
+                        "bénéfice, marge ou trésorerie ; comparer deux "
+                        "périodes ; suivre les créances clients et dire qui "
+                        "relancer ; enregistrer, modifier ou supprimer une "
+                        "transaction."
+                    ),
+                    reply_type="feature_unavailable",
+                    user_message=user_message,
+                    fallback=(
+                        "Cette fonctionnalité n'est pas encore disponible chez Femi 🙂\n\n"
+                        "Je peux en revanche t'aider avec :\n"
+                        "• Ton chiffre d'affaires, tes dépenses (avec détail par catégorie), "
+                        "ton bénéfice, ta marge ou ta trésorerie ;\n"
+                        "• Une comparaison entre deux périodes ;\n"
+                        "• Tes créances clients et qui relancer ;\n"
+                        "• Enregistrer, modifier ou supprimer une transaction."
+                    ),
+                    timeout=_SHORT_REPLY_TIMEOUT,
                 )
             clarification = cls._build_clarification_message(
-                    missing_fields, accounting_results
+                    missing_fields, accounting_results, user_message
                 )
             if clarification:
                 return clarification
-            return "Je n'ai pas toutes les informations nécessaires. Peux-tu préciser ta demande ?"
+            return write_natural_reply(
+                facts=(
+                    "Il manque des informations pour traiter la demande, "
+                    "sans savoir lesquelles précisément. Demande à "
+                    "l'utilisateur de préciser sa demande."
+                ),
+                reply_type="clarification",
+                user_message=user_message,
+                fallback="Je n'ai pas toutes les informations nécessaires. Peux-tu préciser ta demande ?",
+                timeout=_SHORT_REPLY_TIMEOUT,
+            )
 
-        return build_off_topic_reply()
+        return cls._natural_off_topic(user_message)
 
     # ============================================================
     # CONSTRUCTION RESULTAT SYNCHRONE
@@ -2094,6 +2228,7 @@ class FemiRouterManager:
                 customer_results=customer_results,
                 needs_clarification=needs_clarification,
                 missing_fields=missing_fields,
+                user_message=raw_text,
             ),
             router_output=router_output,
             operation_ids=operation_ids,
@@ -2527,6 +2662,7 @@ class FemiRouterManager:
                 customer_results=customer_results,
                 needs_clarification=needs_clarification,
                 missing_fields=missing_fields,
+                user_message=raw_text,
             ),
             router_output=router_output,
             operation_ids=operation_ids,
@@ -2554,8 +2690,11 @@ class FemiRouterManager:
 
         import time
 
+        # Format réel détecté sur les octets (image ou PDF)
+        content_type = detect_mime(image_bytes) or "image/jpeg"
         filename = (
-            f"whatsapp_{operation.id}.jpg"
+            f"whatsapp_{operation.id}"
+            f"{extension_for(image_bytes)}"
         )
 
         max_retries = 3
@@ -2571,7 +2710,7 @@ class FemiRouterManager:
                 public_url = upload_file(
                     content=image_bytes,
                     filename=filename,
-                    content_type="image/jpeg",
+                    content_type=content_type,
                 )
 
                 break
@@ -2617,7 +2756,7 @@ class FemiRouterManager:
                     operation=operation,
                     nom_fichier=filename,
                     url_fichier=public_url,
-                    type_mime="image/jpeg",
+                    type_mime=content_type,
                     taille_octets=len(image_bytes),
                 )
 

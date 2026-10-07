@@ -16,13 +16,16 @@ et gère lui-même l'encodage base64 — aucune autre couche ne doit dupliquer
 cet encodage.
 """
 
+import asyncio
 import base64
 import logging
 
 from django.conf import settings
 
 from apps.femi_agent.agent.base_executor import BaseAgentExecutionError, StructuredLLMExecutor
+from apps.femi_agent.agent.ocr_postprocess import merge_ocr_results
 from apps.femi_agent.agent.prompts.ocr_prompt import OCR_PROMPT
+from apps.femi_agent.parsers.document_loader import to_page_images
 from apps.femi_agent.schemas import OcrExtractionResult
 
 logger = logging.getLogger(__name__)
@@ -59,16 +62,9 @@ class OcrExecutor:
         return getattr(settings, "FEMI_VISION_MODEL", DEFAULT_VISION_MODEL)
 
     @classmethod
-    def execute(cls, image_bytes: bytes) -> OcrExtractionResult:
-        """Exécution synchrone de l'agent OCR.
-
-        Args:
-            image_bytes: Bytes bruts de l'image (JPEG/PNG), non encodés.
-
-        Returns:
-            OcrExtractionResult (schéma structuré, voir schemas/ocr.py).
-        """
-        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+    def _execute_page(cls, page_bytes: bytes) -> OcrExtractionResult:
+        """Analyse UNE image (une page) avec le modèle vision."""
+        image_b64 = base64.b64encode(page_bytes).decode("utf-8")
         return StructuredLLMExecutor.execute(
             prompt_text=OCR_PROMPT,
             message_text=_USER_INSTRUCTION,
@@ -81,9 +77,8 @@ class OcrExecutor:
         )
 
     @classmethod
-    async def aexecute(cls, image_bytes: bytes) -> OcrExtractionResult:
-        """Exécution asynchrone de l'agent OCR (mêmes arguments que execute())."""
-        image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+    async def _aexecute_page(cls, page_bytes: bytes) -> OcrExtractionResult:
+        image_b64 = base64.b64encode(page_bytes).decode("utf-8")
         return await StructuredLLMExecutor.aexecute(
             prompt_text=OCR_PROMPT,
             message_text=_USER_INSTRUCTION,
@@ -94,3 +89,43 @@ class OcrExecutor:
             images=[image_b64],
             model_name=cls._get_vision_model_name(),
         )
+
+    @classmethod
+    def execute(cls, image_bytes: bytes) -> OcrExtractionResult:
+        """Exécution synchrone de l'agent OCR.
+
+        Args:
+            image_bytes: Bytes bruts d'une image (JPEG/PNG/WebP) OU d'un PDF,
+                non encodés. Le format est détecté sur les octets eux-mêmes
+                (voir parsers/document_loader.py). Un PDF est lu page par
+                page puis fusionné : chaque page passe par le même chemin
+                vision qu'une image seule.
+
+        Returns:
+            OcrExtractionResult (schéma structuré, voir schemas/ocr.py).
+
+        Raises:
+            UnsupportedDocumentError: format non pris en charge, PDF protégé,
+                corrompu ou trop long (message en français pour l'utilisateur).
+            OcrExecutionError: échec du modèle vision sur une page. Aucun
+                résultat partiel n'est retourné : un document à moitié lu
+                donnerait des totaux faux.
+        """
+        pages = to_page_images(image_bytes)
+        if len(pages) > 1:
+            logger.info("[OcrExecutor] Document de %d pages.", len(pages))
+        results = [cls._execute_page(page) for page in pages]
+        return merge_ocr_results(results)
+
+    @classmethod
+    async def aexecute(cls, image_bytes: bytes) -> OcrExtractionResult:
+        """Exécution asynchrone de l'agent OCR (mêmes arguments que execute()).
+        Les pages sont analysées l'une après l'autre (pas en parallèle) pour
+        ne pas saturer les limites de débit du fournisseur vision."""
+        pages = await asyncio.to_thread(to_page_images, image_bytes)
+        if len(pages) > 1:
+            logger.info("[OcrExecutor] Document de %d pages.", len(pages))
+        results = []
+        for page in pages:
+            results.append(await cls._aexecute_page(page))
+        return merge_ocr_results(results)
