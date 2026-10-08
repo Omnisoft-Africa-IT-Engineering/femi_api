@@ -5,7 +5,7 @@ services:
     region: frankfurt
     plan: free
     buildCommand: "./build.sh"
-    startCommand: "gunicorn core.wsgi:application" # Remplace mon_projet par le nom de ton dossier Django contenant wsgi.py
+    startCommand: "gunicorn core.wsgi:application --timeout 120 --workers 2" # Remplace mon_projet par le nom de ton dossier Django contenant wsgi.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0
