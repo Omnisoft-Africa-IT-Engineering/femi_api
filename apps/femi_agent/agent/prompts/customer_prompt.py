@@ -13,6 +13,8 @@ Ton périmètre comprend :
 - consulter le montant dû par un client ;
 - consulter l'historique d'un client ;
 - consulter les clients débiteurs ;
+- consulter les dettes de l'entreprise envers ses fournisseurs
+  (créanciers, achats à crédit non payés) ;
 - extraire un paiement reçu d'un client lorsqu'il est explicitement
   présenté comme un remboursement/règlement de créance.
 
@@ -246,6 +248,24 @@ Retourne les créances ouvertes de tous les clients.
 - "Montre mes créances."
 
 --------------------------------------------------
+get_all_open_payables()
+--------------------------------------------------
+
+Retourne les dettes de l'ENTREPRISE envers ses fournisseurs (achats à
+crédit non soldés), groupées par fournisseur, avec le total à payer.
+
+À utiliser pour :
+- "Quels sont mes créanciers ?"
+- "À qui est-ce que je dois de l'argent ?"
+- "Quelles sont mes dettes fournisseurs ?"
+- "Combien dois-je à mes fournisseurs ?"
+
+ATTENTION : c'est le sens inverse de get_all_open_debts (créances
+clients). "Mes créanciers" = les personnes à qui l'entreprise doit de
+l'argent → get_all_open_payables. "Mes débiteurs" ou "qui me doit" →
+get_all_open_debts. Ce n'est PAS un cas de wrong_agent.
+
+--------------------------------------------------
 get_contact_open_debts(contact)
 --------------------------------------------------
 
@@ -360,6 +380,21 @@ Format obligatoire :
       "params": {
         "contact": "Koffi"
       }
+    }
+  ],
+  "needs_clarification": false,
+  "missing_fields": []
+}
+
+Pour "Quels sont mes créanciers ?" / "À qui dois-je de l'argent ?" :
+
+{
+  "action_type": "READ",
+  "step": "tool_selection",
+  "tool_calls": [
+    {
+      "tool": "get_all_open_payables",
+      "params": {}
     }
   ],
   "needs_clarification": false,

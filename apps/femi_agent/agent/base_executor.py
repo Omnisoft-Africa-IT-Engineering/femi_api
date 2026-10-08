@@ -59,6 +59,26 @@ class BaseAgentExecutionError(Exception):
     pass
 
 
+def _content_to_text(content) -> str:
+    """Normalise le contenu d'une réponse LLM en texte.
+
+    Gemini (langchain_google_genai) renvoie parfois `content` sous forme de
+    liste de blocs ([{"type": "text", "text": "..."}, ...]) au lieu d'une
+    chaîne : re.search() levait alors TypeError et masquait la vraie réponse.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict) and isinstance(block.get("text"), str):
+                parts.append(block["text"])
+        return "\n".join(parts)
+    return str(content)
+
+
 class StructuredLLMExecutor:
     """
     Exécuteur générique : appelle le LLM avec sortie structurée contrainte
@@ -316,6 +336,7 @@ class StructuredLLMExecutor:
             ]
             raw_response = llm.invoke(messages)
             content = raw_response.content if hasattr(raw_response, "content") else str(raw_response)
+            content = _content_to_text(content)
 
             json_match = re.search(r"\{.*\}", content, re.DOTALL)
             if json_match:
