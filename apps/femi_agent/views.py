@@ -6,7 +6,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 
 from apps.femi_agent.agent.router_manager import FemiRouterManager
+#from rest_framework import serializers
 
+#class AgentChatSerializer(serializers.Serializer):
+   # message = serializers.CharField(required=True, help_text="Message ou instruction textuelle pour l'agent IA")
 
 
 logger = logging.getLogger(__name__)
@@ -14,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 class AgentChatAPIView(APIView):
     permission_classes = [IsAuthenticated]
-
+#serializer_class = AgentChatSerializer
     def post(self, request):
         try:
             message = request.data.get("message")

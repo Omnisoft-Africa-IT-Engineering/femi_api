@@ -9,7 +9,7 @@ from apps.femi_account.models import Devis
 from apps.femi_account.services import PDFQuoteService
 from .serializers import DevisSerializer # Ton sérialiseur existant
 # from apps.femi_account.services import PDFQuoteService # Ton service PDF
-from drf_spectacular.utils import extend_schema
+#from drf_spectacular.utils import extend_schema
 from django.contrib.auth import authenticate
 from django.db import connection, transaction
 from django.db.models import Q, Sum

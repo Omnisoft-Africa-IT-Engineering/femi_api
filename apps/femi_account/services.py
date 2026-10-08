@@ -158,8 +158,6 @@ def generer_echeances_otr(entreprise, annee: int):
         )
 
 
-
-
 class PDFQuoteService:
     """
     Service de génération de devis au format PDF pour Femi (Conforme SYSCOHADA / PME).
@@ -167,7 +165,12 @@ class PDFQuoteService:
 
     @staticmethod
     def generate_quote_pdf(devis_instance) -> BytesIO:
+        # 1. Création d'un flux d'octets en mémoire (RAM) pour stocker le PDF 
+        # sans avoir à l'enregistrer physiquement sur le disque du serveur.
         buffer = BytesIO()
+        
+        # 2. Initialisation du document PDF avec ReportLab : 
+        # Format A4 et application de marges uniformes de 2 cm tout autour.
         doc = SimpleDocTemplate(
             buffer,
             pagesize=A4,
@@ -177,9 +180,13 @@ class PDFQuoteService:
             bottomMargin=2 * cm
         )
         
+        # Liste qui va accumuler tous les éléments (titres, tableaux, espaces) dans l'ordre d'affichage.
         elements = []
+        
+        # Récupération de la feuille de style par défaut de ReportLab.
         styles = getSampleStyleSheet()
         
+        # Définition d'un style personnalisé pour le titre du document (Grand, bleu foncé).
         title_style = ParagraphStyle(
             'TitleStyle',
             parent=styles['Heading1'],
@@ -188,6 +195,7 @@ class PDFQuoteService:
             spaceAfter=6
         )
         
+        # Styles de texte normaux et gras pour la mise en forme du contenu.
         normal_style = styles['Normal']
         bold_style = ParagraphStyle(
             'BoldStyle',
@@ -195,9 +203,14 @@ class PDFQuoteService:
             fontName='Helvetica-Bold'
         )
 
+        # Récupération sécurisée du nom et de l'adresse de l'entreprise émettrice 
+        # (avec des valeurs par défaut si les attributs sont absents).
         company_name = getattr(devis_instance.entreprise, 'name', 'Femi Enterprise')
         company_info = getattr(devis_instance.entreprise, 'address', 'Lomé, Togo')
         
+        # 3. Construction de l'en-tête (Header) sous forme de tableau à 2 colonnes :
+        # - Colonne de gauche : Infos de l'entreprise.
+        # - Colonne de droite : Numéro du devis, date de création et statut formaté.
         header_data = [
             [
                 Paragraph(f"<b>{company_name}</b><br/>{company_info}", normal_style),
@@ -212,24 +225,27 @@ class PDFQuoteService:
             ('BOTTOMPADDING', (0,0), (-1,-1), 10),
         ]))
         elements.append(header_table)
-        elements.append(Spacer(1, 1 * cm))
+        elements.append(Spacer(1, 1 * cm)) # Espace vertical de 1 cm
 
+        # Récupération des informations du client destinataire.
         client_name = getattr(devis_instance.client, 'name', 'Client Comptant')
         client_address = getattr(devis_instance.client, 'address', '')
         
+        # 4. Construction du bloc "Facturer à" avec un fond grisé distinctif.
         client_data = [
             [Paragraph("<b>Facturer à :</b>", bold_style)],
             [Paragraph(f"<b>{client_name}</b><br/>{client_address}", normal_style)]
         ]
         client_table = Table(client_data, colWidths=[17 * cm])
         client_table.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F3F4F6')),
+            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F3F4F6')), # Fond gris clair
             ('PADDING', (0,0), (-1,-1), 10),
             ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
         ]))
         elements.append(client_table)
         elements.append(Spacer(1, 1 * cm))
 
+        # 5. Préparation du tableau des articles/lignes du devis (En-têtes)
         table_data = [
             [
                 Paragraph("<b>Description</b>", bold_style),
@@ -239,15 +255,17 @@ class PDFQuoteService:
             ]
         ]
         
+        # Récupération sécurisée de toutes les lignes rattachées au devis.
         lines = devis_instance.lignes.all() if hasattr(devis_instance, 'lignes') else []
         for line in lines:
             table_data.append([
                 Paragraph(line.description, normal_style),
                 str(line.quantity),
-                f"{line.unit_price:,.2f}",
-                f"{line.total_ht:,.2f}"
+                f"{line.unit_price:,.2f}",     # Formatage du prix avec séparateurs de milliers
+                f"{line.total_ht:,.2f}"         # Formatage du montant total de la ligne
             ])
             
+        # Création et stylisation du tableau des articles (fond gris clair pour l'en-tête, grille fine).
         item_table = Table(table_data, colWidths=[8 * cm, 2 * cm, 3.5 * cm, 3.5 * cm])
         item_table.setStyle(TableStyle([
             ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#E5E7EB')),
@@ -261,10 +279,12 @@ class PDFQuoteService:
         elements.append(item_table)
         elements.append(Spacer(1, 0.5 * cm))
 
+        # 6. Calculs financiers (Total HT, TVA à 18% standardisée et Total TTC).
         subtotal_ht = getattr(devis_instance, 'total_ht', 0)
         tax_amount = subtotal_ht * Decimal('0.18')
         total_ttc = subtotal_ht + tax_amount
 
+        # Tableau récapitulatif des totaux aligné à droite.
         totals_data = [
             ["Total HT :", f"{subtotal_ht:,.2f} FCFA"],
             ["TVA (18%) :", f"{tax_amount:,.2f} FCFA"],
@@ -281,6 +301,7 @@ class PDFQuoteService:
         elements.append(totals_table)
         elements.append(Spacer(1, 2 * cm))
 
+        # 7. Bloc final des signatures (Cachet de l'entreprise et "Bon pour accord" client).
         footer_data = [
             [
                 Paragraph("<b>Cachet et Signature :</b>", normal_style),
@@ -290,10 +311,11 @@ class PDFQuoteService:
         footer_table = Table(footer_data, colWidths=[8.5 * cm, 8.5 * cm])
         footer_table.setStyle(TableStyle([
             ('VALIGN', (0,0), (-1,-1), 'TOP'),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 40),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 40), # Espace vide réservé pour apposer la signature
         ]))
         elements.append(footer_table)
 
+        # 8. Compilation finale et construction du PDF, puis repositionnement du curseur du buffer au début.
         doc.build(elements)
         buffer.seek(0)
         return buffer
