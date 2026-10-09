@@ -1254,16 +1254,19 @@ class FemiRouterManager:
         contact = result.contact or "ce contact"
         return f"✅ Paiement de {montant} enregistré pour {contact}."
 
+   
+
     @classmethod
     def _summarize_quotes(cls, result: QuoteExtractionResult) -> str:
         client = getattr(result, "client_nom", None) or "le client"
         
-        # Calcul du montant total à partir des lignes du devis
         lignes = getattr(result, "lignes", [])
-        total = sum(l.quantite * l.prix_unitaire for l in lignes) if lignes else 0
+        # Calcul sécurisé du total
+        total = sum(float(l.quantite) * float(l.prix_unitaire) for l in lignes) if lignes else 0.0
         
         montant = cls._format_montant(total, "FCFA")
         return f"📄 Devis généré avec succès pour {client} d'un montant de {montant}."
+
 
     @staticmethod
     def _summarize_propose_change(result: AccountingModifyProposeChangeResult) -> str:
