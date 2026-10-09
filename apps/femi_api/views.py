@@ -2047,20 +2047,31 @@ class TranscrireAudioAPIView(APIView):
 
 
 
-
 # 1. Lister et Créer les devis
 class DevisListCreateView(generics.ListCreateAPIView):
-    queryset = Devis.objects.all()
     serializer_class = DevisSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        # Retourne uniquement les devis de l'entreprise de l'utilisateur connecté
-        return Devis.objects.filter(entreprise=self.request.user.entreprise)
+        user = self.request.user
+        if not user or not user.is_authenticated:
+            return Devis.objects.none()
+        
+        entreprise = getattr(user, 'entreprise', None)
+        if not entreprise:
+            profile = getattr(user, 'profile', None)
+            entreprise = getattr(profile, 'entreprise', None)
+            
+        if entreprise:
+            return Devis.objects.filter(entreprise=entreprise).order_by('-created_at')
+        return Devis.objects.none()
 
     def perform_create(self, serializer):
-        # Associe automatiquement l'entreprise lors de la création
-        serializer.save(entreprise=self.request.user.entreprise)
+        entreprise = getattr(self.request.user, 'entreprise', None)
+        if not entreprise:
+            profile = getattr(self.request.user, 'profile', None)
+            entreprise = getattr(profile, 'entreprise', None)
+        serializer.save(entreprise=entreprise)
 
 # 2. Voir, Modifier ou Supprimer un devis spécifique
 class DevisDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -2068,15 +2079,23 @@ class DevisDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return Devis.objects.filter(entreprise=self.request.user.entreprise)
+        user = self.request.user
+        entreprise = getattr(user, 'entreprise', None)
+        if not entreprise:
+            return Devis.objects.none()
+        return Devis.objects.filter(entreprise=entreprise)
 
-# 3. Télécharger le PDF (celui qu'on a validé juste avant)
+# 3. Télécharger le PDF
 class DownloadQuotePDFView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, pk, format=None):
+        entreprise = getattr(request.user, 'entreprise', None)
+        if not entreprise:
+            return Response({"error": "Aucune entreprise associée."}, status=400)
+            
         try:
-            devis = Devis.objects.get(pk=pk, entreprise=request.user.entreprise)
+            devis = Devis.objects.get(pk=pk, entreprise=entreprise)
         except Devis.DoesNotExist:
             return Response({"error": "Devis introuvable."}, status=404)
 
