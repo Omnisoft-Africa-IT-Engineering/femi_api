@@ -24,6 +24,7 @@ DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
 DEFAULT_MISTRAL_MODEL = "mistral-small-latest"
 DEFAULT_CLOUDFLARE_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
 DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
+GEMINI_MIN_TIMEOUT_SECONDS = 10.0
 
 
 @lru_cache(maxsize=8)
@@ -318,6 +319,12 @@ def _get_gemini_llm(
     """Instancie ChatGoogleGenerativeAI pour Gemini."""
 
     from langchain_google_genai import ChatGoogleGenerativeAI
+
+    # L'API Gemini refuse tout délai inférieur à 10 s (erreur 400 « Manually
+    # set deadline 8s is too short »). Plusieurs appelants (réponses courtes
+    # du ResponseWriter, tâches WhatsApp) demandent 8 s : sans ce plancher,
+    # leur appel échouait toujours et le texte de secours était envoyé.
+    timeout = max(timeout, GEMINI_MIN_TIMEOUT_SECONDS)
 
     model_name = model_name or getattr(
         settings,
