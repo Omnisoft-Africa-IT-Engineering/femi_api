@@ -61,7 +61,7 @@ def get_contact_open_debts(entreprise, contact):
         }
     """
     if contact is None:
-        return {"contact": None, "operations": [], "total_du": 0.0, "has_open_debt": False}
+        return {"success": True, "contact": None, "operations": [], "total_du": 0.0, "has_open_debt": False}
 
     qs = (
         Operation.objects.filter(
@@ -77,6 +77,7 @@ def get_contact_open_debts(entreprise, contact):
     total_du = sum((op["solde_restant"] for op in operations), 0.0)
 
     return {
+        "success": True,
         "contact": contact.nom,
         "operations": operations,
         "total_du": total_du,
@@ -177,7 +178,7 @@ def get_all_open_debts(entreprise):
     contacts = sorted(par_contact.values(), key=lambda e: e["total_du"], reverse=True)
     total_general = sum((c["total_du"] for c in contacts), 0.0)
 
-    return {"contacts": contacts, "total_general": total_general}
+    return {"success": True, "contacts": contacts, "total_general": total_general}
 
 
 def get_all_open_payables(entreprise):
@@ -234,6 +235,7 @@ def get_all_open_payables(entreprise):
     total_general = sum((c["total_a_payer"] for c in contacts), 0.0) + sans_contact["total_a_payer"]
 
     return {
+        "success": True,
         "contacts": contacts,
         "sans_contact": sans_contact,
         "total_general": total_general,
