@@ -60,7 +60,7 @@ import calendar
 from datetime import timedelta
 from decimal import Decimal
 
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.utils import timezone
 
 from apps.femi_account.models import Operation
@@ -117,13 +117,15 @@ def get_expenses(entreprise, periode, date_debut=None, date_fin=None, detail_par
 
     par_categorie = None
     if detail_par_categorie:
-        lignes = (
-            depenses_qs.exclude(category__isnull=True).exclude(category__exact="")
-            .values("category")
-            .annotate(total=Sum("amount_ttc"))
-            .order_by("-total")
-        )
-        par_categorie = [{"categorie": l["category"], "montant": float(l["total"])} for l in lignes] or None
+        avec_categorie = depenses_qs.exclude(category__isnull=True).exclude(category__exact="")
+        lignes = avec_categorie.values("category").annotate(total=Sum("amount_ttc")).order_by("-total")
+        par_categorie = [{"categorie": l["category"], "montant": float(l["total"])} for l in lignes]
+        # Les dépenses sans catégorie restent visibles dans la répartition
+        # (sinon « où va l'argent » ne montrait que le total, sans détail).
+        sans_categorie = float(_sum(depenses_qs.filter(Q(category__isnull=True) | Q(category__exact=""))))
+        if sans_categorie > 0:
+            par_categorie.append({"categorie": "Sans catégorie", "montant": sans_categorie})
+        par_categorie = par_categorie or None
 
     return {"periode": periode, "expenses": expenses, "currency": "XOF", "par_categorie": par_categorie}
 

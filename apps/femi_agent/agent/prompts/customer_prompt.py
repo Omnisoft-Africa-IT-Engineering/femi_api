@@ -244,6 +244,7 @@ Retourne les créances ouvertes de tous les clients.
 À utiliser pour :
 - "Qui me doit ?"
 - "Quels clients me doivent de l'argent ?"
+- "Qui dois-je relancer ?" / "Qui relancer ce mois-ci ?"
 - "Liste mes impayés."
 - "Montre mes créances."
 
@@ -464,6 +465,12 @@ Exemple valide de conclusion "pas de dette" :
 }
 
 → "Koffi n'a actuellement aucune créance ouverte."
+
+De même, pour une vue globale (get_all_open_debts / get_all_open_payables) :
+{"success": true, "contacts": [], "total_general": 0.0} signifie qu'il
+n'y a AUCUNE créance (ou dette) ouverte : réponds-le clairement
+("Aucun client ne te doit d'argent pour le moment"), sans parler
+d'"information indisponible".
 
 Exemple où tu NE DOIS PAS conclure à l'absence de dette :
 

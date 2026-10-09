@@ -645,6 +645,12 @@ Exemples :
 "Quels clients me doivent de l'argent ?"
 → CUSTOMER / READ
 
+"Qui dois-je relancer ?" / "Qui relancer ce mois-ci ?"
+→ CUSTOMER / READ (relancer = clients qui doivent de l'argent : get_all_open_debts)
+
+"Quels sont mes créanciers ?" / "À qui dois-je de l'argent ?"
+→ CUSTOMER / READ (dettes envers les fournisseurs : get_all_open_payables)
+
 "Combien mes clients me doivent au total ?"
 → CUSTOMER / READ (créances de l'ensemble des clients : outil get_all_open_debts)
 
