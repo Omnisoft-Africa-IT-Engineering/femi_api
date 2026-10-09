@@ -27,7 +27,6 @@ class OperationModelSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
-
 class BatchTransactionItemSerializer(serializers.Serializer):
     """Un élément d'une soumission par lot (texte uniquement — pas d'image/audio en lot pour l'instant)."""
     text = serializers.CharField(required=True, allow_blank=False)
@@ -56,7 +55,7 @@ class LigneDevisSerializer(serializers.ModelSerializer):
 
 class DevisSerializer(serializers.ModelSerializer):
     lignes = LigneDevisSerializer(many=True, read_only=True)
-    client_nom = serializers.CharField(source='client.nom', read_only=True)
+    client_nom = serializers.SerializerMethodField()
     
     class Meta:
         model = Devis
@@ -69,6 +68,9 @@ class DevisSerializer(serializers.ModelSerializer):
             'id', 'reference', 'entreprise', 'date_emission', 
             'montant_total', 'created_at', 'updated_at'
         ]
+
+    def get_client_nom(self, obj):
+        return obj.client.nom if obj and obj.client else None
 
 
 class DevisCreateSerializer(serializers.ModelSerializer):
@@ -90,4 +92,3 @@ class DevisCreateSerializer(serializers.ModelSerializer):
             
         devis.calculer_total()
         return devis
-
