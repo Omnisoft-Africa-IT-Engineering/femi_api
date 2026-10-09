@@ -1215,10 +1215,26 @@ class FemiRouterManager:
             if not result.transactions:
                 return []
 
+            # Transactions qui visaient une facture déjà enregistrée
+            # (règlement / doublon) : message déterministe, jamais
+            # « enregistrée » à tort.
+            messages_speciaux = [
+                cls._message_facture_existante(txn)
+                for txn in result.transactions
+                if getattr(txn, "_statut_enregistrement", None)
+            ]
+            transactions_normales = [
+                txn
+                for txn in result.transactions
+                if not getattr(txn, "_statut_enregistrement", None)
+            ]
+            if not transactions_normales:
+                return messages_speciaux
+
             fact_lines: list[str] = []
             fallback_lines: list[str] = []
 
-            for txn in result.transactions:
+            for txn in transactions_normales:
                 label = cls._TRANSACTION_TYPE_LABELS.get(
                     txn.transaction_type, txn.transaction_type
                 )
@@ -1328,7 +1344,50 @@ class FemiRouterManager:
                 fallback=fallback,
                 temperature=0.7,
             )
-            return [natural]
+            return [natural] + messages_speciaux
+
+    @classmethod
+    def _message_facture_existante(cls, txn) -> str:
+        """Message pour une facture déjà enregistrée : règlement imputé,
+        facture déjà soldée ou doublon évité."""
+        statut = getattr(txn, "_statut_enregistrement", None)
+        detail = getattr(txn, "_detail_enregistrement", None) or {}
+        reference = detail.get("reference") or "?"
+        devise = detail.get("currency")
+        contact = f" ({detail['contact']})" if detail.get("contact") else ""
+
+        if statut == "reglement":
+            impute = cls._format_montant(detail.get("montant_impute"), devise)
+            reste = detail.get("reste")
+            if reste is not None and reste > 0:
+                fin = f"Il reste {cls._format_montant(reste, devise)} à régler sur cette facture."
+            else:
+                fin = "La facture est maintenant entièrement réglée."
+            message = (
+                f"✅ Règlement de {impute} enregistré sur la facture "
+                f"n°{reference}{contact}. {fin}"
+            )
+            surplus = detail.get("surplus")
+            if surplus is not None and surplus > 0:
+                message += (
+                    f" Tu as indiqué {cls._format_montant(surplus, devise)} "
+                    f"de plus que le reste dû : ce surplus n'a pas été enregistré."
+                )
+            return message
+
+        if statut == "deja_soldee":
+            return (
+                f"La facture n°{reference}{contact} est déjà enregistrée et "
+                f"entièrement réglée. Je n'ai rien enregistré de plus."
+            )
+
+        total = cls._format_montant(detail.get("montant_total"), devise)
+        date_op = detail.get("date")
+        quand = f" le {date_op.strftime('%d/%m/%Y')}" if date_op else ""
+        return (
+            f"Cette facture n°{reference}{contact} de {total} est déjà "
+            f"enregistrée{quand}. Je ne l'ai pas enregistrée une deuxième fois."
+        )
 
     @classmethod
     def _summarize_customer_payment(cls, result: CustomerExtractionOutput) -> str:
@@ -2451,6 +2510,14 @@ class FemiRouterManager:
             )
 
             for operation in all_operations:
+
+                # Doublon / facture déjà soldée : l'opération existe déjà
+                # avec sa pièce, on n'en rattache pas une deuxième.
+                if getattr(operation, "_femi_outcome", None) in (
+                    "doublon",
+                    "deja_soldee",
+                ):
+                    continue
 
                 cls._attach_piece_justificative_bytes(
                     operation,

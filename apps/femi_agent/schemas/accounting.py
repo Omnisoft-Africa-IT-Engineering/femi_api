@@ -60,7 +60,7 @@ from enum import Enum
 from typing import Any, Literal, Optional
 from .common import ConfidenceEnum
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator
 
 
 class AccountingPaymentMethodEnum(str, Enum):
@@ -200,6 +200,13 @@ class AccountingTransactionSchema(BaseModel):
     check_open_loan: bool = False
 
     confidence: AccountingConfidenceEnum = AccountingConfidenceEnum.MEDIUM
+
+    # Renseignés par accounting_manager APRÈS la sauvegarde (jamais par le
+    # LLM : attributs privés, absents du schéma JSON). Valeurs possibles de
+    # _statut_enregistrement : None (création normale), "reglement",
+    # "doublon", "deja_soldee". Servent au message final de l'utilisateur.
+    _statut_enregistrement: Optional[str] = PrivateAttr(default=None)
+    _detail_enregistrement: Optional[dict] = PrivateAttr(default=None)
 
     @field_validator(
         "amount_ttc",

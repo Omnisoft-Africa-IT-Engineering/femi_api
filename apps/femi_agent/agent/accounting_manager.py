@@ -28,6 +28,7 @@ par paiement.
 """
 
 import logging
+import re
 
 from django.db import transaction
 
@@ -217,6 +218,137 @@ def _resolve_paiement(txn):
     return "CREDIT", avance
 
 
+# ----------------------------------------------------------------------
+# FACTURE DÉJÀ ENREGISTRÉE : RÈGLEMENT ET ANTI-DOUBLON
+# ----------------------------------------------------------------------
+#
+# Operation n'a pas de champ « référence » : le numéro de facture n'existe
+# que dans la description (« Facture n°12345 - … »). On le retrouve par
+# expression régulière. Deux factures de fournisseurs différents peuvent
+# porter le même numéro : si les deux contacts sont connus et différents,
+# ce n'est PAS la même facture.
+
+_REFERENCE_FACTURE_RE = re.compile(
+    r"(?:facture|invoice|re[cç]u|ticket)\s*"
+    r"(?:num[eé]ro|n[°ºo]?\.?|#)?\s*[:#]?\s*"
+    r"([A-Za-z0-9][A-Za-z0-9\-/_.]*)",
+    re.IGNORECASE,
+)
+
+
+def extraire_reference_facture(texte):
+    """Numéro de facture trouvé dans un texte (en minuscules), ou None.
+
+    Le numéro doit contenir au moins un chiffre ; « facture de mars » ne
+    donne donc rien.
+    """
+    if not texte:
+        return None
+    for match in _REFERENCE_FACTURE_RE.finditer(texte):
+        reference = match.group(1).strip(".-/_")
+        if any(c.isdigit() for c in reference):
+            return reference.lower()
+    return None
+
+
+def _trouver_operation_par_reference(entreprise, txn, reference):
+    candidats = (
+        Operation.objects
+        .filter(
+            entreprise=entreprise,
+            transaction_type=txn.transaction_type,
+            description__icontains=reference,
+        )
+        .select_related("contact")
+        .order_by("-created_at")[:20]
+    )
+    for operation in candidats:
+        if extraire_reference_facture(operation.description) != reference:
+            continue
+        if (
+            txn.contact
+            and operation.contact is not None
+            and operation.contact.nom.strip().lower()
+            != txn.contact.strip().lower()
+        ):
+            continue
+        return operation
+    return None
+
+
+def _traiter_facture_existante(entreprise, txn):
+    """
+    Si la transaction concerne une facture DÉJÀ enregistrée (même numéro,
+    même type, même contact quand il est connu), évite d'enregistrer une
+    deuxième fois la même opération.
+
+    - facture ouverte (reste > 0) et paiement (PAYE)  -> « reglement » :
+      le montant est imputé sur l'opération existante ;
+    - facture déjà soldée et paiement (PAYE)          -> « deja_soldee » ;
+    - facture à crédit, même montant                  -> « doublon » ;
+    - sinon (montant différent...) : None, création normale.
+
+    Retourne l'Operation existante (avec txn._statut_enregistrement
+    renseigné), ou None si la transaction doit être créée normalement.
+    Doit être appelée dans un bloc transaction.atomic().
+    """
+
+    if txn.transaction_type not in ("RECETTE", "DEPENSE") or not txn.amount_ttc:
+        return None
+
+    reference = extraire_reference_facture(txn.description)
+    if not reference:
+        return None
+
+    trouvee = _trouver_operation_par_reference(entreprise, txn, reference)
+    if trouvee is None:
+        return None
+
+    operation = Operation.objects.select_for_update().get(id=trouvee.id)
+    reste = operation.amount_ttc - operation.montant_paye
+
+    detail = {
+        "reference": reference,
+        "date": operation.transaction_date,
+        "currency": operation.currency,
+        "contact": operation.contact.nom if operation.contact else None,
+        "montant_total": operation.amount_ttc,
+    }
+
+    if txn.statut_paiement == "PAYE":
+        if reste <= 0:
+            statut = "deja_soldee"
+        else:
+            imputation = min(txn.amount_ttc, reste)
+            operation.montant_paye += imputation
+            if operation.montant_paye >= operation.amount_ttc:
+                operation.statut_paiement = "PAYE"
+            operation.save(update_fields=["montant_paye", "statut_paiement"])
+            detail["montant_impute"] = imputation
+            detail["reste"] = operation.amount_ttc - operation.montant_paye
+            detail["surplus"] = txn.amount_ttc - imputation
+            statut = "reglement"
+    elif txn.amount_ttc == operation.amount_ttc:
+        statut = "doublon"
+    else:
+        return None
+
+    txn._statut_enregistrement = statut
+    txn._detail_enregistrement = detail
+    operation._femi_outcome = statut
+
+    logger.info(
+        "[AccountingManager] Facture déjà enregistrée : statut=%s "
+        "reference=%s operation_id=%s detail=%s",
+        statut,
+        reference,
+        operation.id,
+        detail,
+    )
+
+    return operation
+
+
 def _save_single_transaction(
     entreprise,
     utilisateur,
@@ -236,6 +368,15 @@ def _save_single_transaction(
     Après création de l'Operation, celle-ci est automatiquement
     rattachée à l'échéance fiscale correspondant à sa période.
     """
+
+    # ---------------------------------------------------------
+    # FACTURE DÉJÀ ENREGISTRÉE (règlement ou doublon)
+    # ---------------------------------------------------------
+    # Avant _resolve_contact : un doublon ne doit pas auto-créer de contact.
+
+    operation_existante = _traiter_facture_existante(entreprise, txn)
+    if operation_existante is not None:
+        return operation_existante
 
     contact = _resolve_contact(
         entreprise,
