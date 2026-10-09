@@ -107,6 +107,22 @@ qui la traitera comme un cas particulier nécessitant clarification
 (voir le prompt de cet agent).
 
 
+### DOCUMENTS SCANNÉS (facture, reçu, ticket)
+
+Un message qui contient un bloc "[DOCUMENT SCANNÉ — ..." provient d'une
+image lue par OCR. En l'absence d'instruction explicite de l'utilisateur,
+il relève de ACCOUNTING / CREATE (enregistrer l'opération), MÊME s'il
+mentionne un nom de client ou de fournisseur.
+
+Il ne relève de CUSTOMER que si le texte écrit par l'utilisateur dit
+explicitement qu'il s'agit du paiement d'une créance client existante.
+
+Un message de suite très court ("c'est une dépense", "c'est un achat",
+"c'est une vente") qui répond à une question sur ce document doit rester
+dans le même agent que celui de la clarification en attente
+(merge_context=true).
+
+
 ### CUSTOMER
 
 Gère les informations et opérations liées à un client ou contact

@@ -476,3 +476,29 @@ CRON_SECRET = config(
     "CRON_SECRET",
     default=""
 )
+
+
+# ============================================================
+# Logs
+# ============================================================
+# Sans cette configuration, Python n'affiche que les WARNING : tous les
+# logger.info() de l'agent (fusion pending_action, routage...) étaient
+# invisibles dans les logs Render. Niveau réglable via FEMI_LOG_LEVEL
+# (DEBUG, INFO, WARNING) sans redéployer le code.
+
+FEMI_LOG_LEVEL = config("FEMI_LOG_LEVEL", default="INFO").upper()
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "femi": {"format": "%(asctime)s %(levelname)s [%(name)s] %(message)s"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "femi"},
+    },
+    "root": {"handlers": ["console"], "level": "WARNING"},
+    "loggers": {
+        "apps": {"handlers": ["console"], "level": FEMI_LOG_LEVEL, "propagate": False},
+    },
+}
