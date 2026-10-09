@@ -19,6 +19,8 @@ montants sans regrouper par devise. Si le multi-devises devient réel un
 jour, ces totaux doivent être recalculés par devise avant d'être sommés.
 """
 
+from django.db.models import F
+
 from apps.femi_account.models import Operation, Contact  # noqa: F401  (Entreprise non utilisé directement ici)
 
 
@@ -133,9 +135,15 @@ def get_all_open_debts(entreprise):
     Vue d'ensemble des créances clients ouvertes, groupées par contact
     (rapport de type "aging report").
 
-    Ne couvre QUE les créances clients (RECETTE/CREDIT), pas les prêts
+    Ne couvre QUE les créances clients (RECETTE non soldées), pas les prêts
     donnés — utiliser get_contact_open_loans / une variante dédiée pour
     une vue globale des prêts si besoin plus tard.
+
+    Même définition que la KPI « Créances » (kpi_service) : toute RECETTE
+    dont amount_ttc > montant_paye, AVEC OU SANS contact rattaché. Les
+    opérations sans contact (facture sans client enregistré) sont
+    regroupées dans "sans_contact" au lieu d'être ignorées, sinon le
+    dashboard affichait une créance que le chat ne retrouvait pas.
 
     Args:
         entreprise: instance Entreprise.
@@ -151,34 +159,47 @@ def get_all_open_debts(entreprise):
                 },
                 ...
             ],   # triés par total_du décroissant (plus gros débiteurs en premier)
-            "total_general": float,
+            "sans_contact": {"operations": [ {..., "client_ou_fournisseur": str | None} ],
+                              "total_du": float},
+            "total_general": float,   # contacts + sans_contact
+            "has_open_debt": bool,
         }
     """
     qs = (
         Operation.objects.filter(
             entreprise=entreprise,
             transaction_type="RECETTE",
-            statut_paiement="CREDIT",
-            contact__isnull=False,
+            amount_ttc__gt=F("montant_paye"),
         )
         .select_related("contact")
         .order_by("contact__nom", "transaction_date")
     )
 
     par_contact = {}
+    sans_contact = {"operations": [], "total_du": 0.0}
     for op in qs:
-        entry = par_contact.setdefault(
-            op.contact_id,
-            {"contact": op.contact.nom, "contact_id": str(op.contact_id), "operations": [], "total_du": 0.0},
-        )
         serialized = _serialize_operation_ouverte(op)
-        entry["operations"].append(serialized)
-        entry["total_du"] += serialized["solde_restant"]
+        if op.contact_id is None:
+            serialized["client_ou_fournisseur"] = op.vendor_or_client
+            cible = sans_contact
+        else:
+            cible = par_contact.setdefault(
+                op.contact_id,
+                {"contact": op.contact.nom, "contact_id": str(op.contact_id), "operations": [], "total_du": 0.0},
+            )
+        cible["operations"].append(serialized)
+        cible["total_du"] += serialized["solde_restant"]
 
     contacts = sorted(par_contact.values(), key=lambda e: e["total_du"], reverse=True)
-    total_general = sum((c["total_du"] for c in contacts), 0.0)
+    total_general = sum((c["total_du"] for c in contacts), 0.0) + sans_contact["total_du"]
 
-    return {"success": True, "contacts": contacts, "total_general": total_general}
+    return {
+        "success": True,
+        "contacts": contacts,
+        "sans_contact": sans_contact,
+        "total_general": total_general,
+        "has_open_debt": total_general > 0,
+    }
 
 
 def get_all_open_payables(entreprise):
@@ -189,7 +210,7 @@ def get_all_open_payables(entreprise):
 
     Une "dette fournisseur" ici = de l'argent que l'ENTREPRISE doit à un
     CONTACT → Operation.transaction_type == "DEPENSE" ET statut_paiement ==
-    "CREDIT" ; solde = amount_ttc - montant_paye, comme kpi_service
+    solde > 0 ; solde = amount_ttc - montant_paye, comme kpi_service
     (calc_dettes, part fournisseurs). Les emprunts reçus (PRET_RECU) ne sont
     PAS inclus.
 
@@ -209,7 +230,7 @@ def get_all_open_payables(entreprise):
         Operation.objects.filter(
             entreprise=entreprise,
             transaction_type="DEPENSE",
-            statut_paiement="CREDIT",
+            amount_ttc__gt=F("montant_paye"),
         )
         .select_related("contact")
         .order_by("contact__nom", "transaction_date")

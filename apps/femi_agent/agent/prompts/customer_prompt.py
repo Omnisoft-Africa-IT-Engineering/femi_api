@@ -248,6 +248,14 @@ Retourne les créances ouvertes de tous les clients.
 - "Liste mes impayés."
 - "Montre mes créances."
 
+Le résultat contient "contacts" (créances par client) et, éventuellement,
+"sans_contact" : des créances SANS client rattaché (ex : facture sans
+nom de client enregistré). Si "sans_contact" contient des opérations,
+mentionne-les ("une facture sans client associé : <description>,
+<solde_restant> XOF") et inclus-les dans le total_general. Ne dis
+JAMAIS "aucun client ne te doit d'argent" si total_general > 0. Le même
+format s'applique à get_all_open_payables (champ total_a_payer).
+
 --------------------------------------------------
 get_all_open_payables()
 --------------------------------------------------
