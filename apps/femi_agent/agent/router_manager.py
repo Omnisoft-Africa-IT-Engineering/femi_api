@@ -1256,8 +1256,13 @@ class FemiRouterManager:
 
     @classmethod
     def _summarize_quotes(cls, result: QuoteExtractionResult) -> str:
-        montant = cls._format_montant(getattr(result, "montant_ttc", None), getattr(result, "currency", "FCFA"))
-        client = getattr(result, "client_name", "le client")
+        client = getattr(result, "client_nom", None) or "le client"
+        
+        # Calcul du montant total à partir des lignes du devis
+        lignes = getattr(result, "lignes", [])
+        total = sum(l.quantite * l.prix_unitaire for l in lignes) if lignes else 0
+        
+        montant = cls._format_montant(total, "FCFA")
         return f"📄 Devis généré avec succès pour {client} d'un montant de {montant}."
 
     @staticmethod

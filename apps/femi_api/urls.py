@@ -49,8 +49,8 @@ urlpatterns = [
     path('transcrire-audio/', TranscrireAudioAPIView.as_view(), name='api_transcrire_audio'),
     path('devis/', DevisListCreateView.as_view(), name='devis-list-create'),
     path('devis/<int:pk>/', DevisDetailView.as_view(), name='devis-detail'),
-    path('api/devis/<int:pk>/pdf/', DownloadQuotePDFView.as_view(), name='download-quote-pdf'),
-
+   # path('api/devis/<int:pk>/pdf/', DownloadQuotePDFView.as_view(), name='download-quote-pdf'),
+    path('devis/<int:pk>/pdf/', DownloadQuotePDFView.as_view(), name='download-quote-pdf'),
 ]
 
 
