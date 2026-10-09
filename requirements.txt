@@ -95,6 +95,7 @@ pydantic==2.13.4
 pydantic-settings==2.15.0
 pydantic_core==2.46.4
 PyJWT==2.14.0
+pymupdf==1.28.2
 pytesseract==0.3.13
 python-crontab==3.4.0
 python-dateutil==2.9.0.post0

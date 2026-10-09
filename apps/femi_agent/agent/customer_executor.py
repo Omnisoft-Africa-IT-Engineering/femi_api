@@ -43,7 +43,7 @@ from apps.femi_agent.agent.tools.contacts import (
     get_contact_info,
     resolve_contact_for_read,
 )
-from apps.femi_agent.agent.tools.debts import get_all_open_debts, get_contact_open_debts
+from apps.femi_agent.agent.tools.debts import get_all_open_debts, get_all_open_payables, get_contact_open_debts
 from apps.femi_agent.schemas.customer import CustomerExtractionOutput, CustomerFirstStepOutput
 from apps.femi_agent.schemas.tool_loop import FinalAnswerOutput, ToolSelectionOutput, ValidationOutput
 
@@ -110,6 +110,7 @@ class CustomerExecutor:
 
         return {
             "get_all_open_debts": functools.partial(get_all_open_debts, entreprise),
+            "get_all_open_payables": functools.partial(get_all_open_payables, entreprise),
             "get_contact_open_debts": _open_debts_by_name,
             "get_contact_info": _contact_info_by_name,
         }

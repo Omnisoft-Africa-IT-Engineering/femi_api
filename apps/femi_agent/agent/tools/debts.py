@@ -178,3 +178,64 @@ def get_all_open_debts(entreprise):
     total_general = sum((c["total_du"] for c in contacts), 0.0)
 
     return {"contacts": contacts, "total_general": total_general}
+
+
+def get_all_open_payables(entreprise):
+    """
+    Vue d'ensemble des dettes envers les fournisseurs (achats à crédit non
+    soldés), groupées par contact — l'équivalent côté fournisseurs de
+    get_all_open_debts.
+
+    Une "dette fournisseur" ici = de l'argent que l'ENTREPRISE doit à un
+    CONTACT → Operation.transaction_type == "DEPENSE" ET statut_paiement ==
+    "CREDIT" ; solde = amount_ttc - montant_paye, comme kpi_service
+    (calc_dettes, part fournisseurs). Les emprunts reçus (PRET_RECU) ne sont
+    PAS inclus.
+
+    Returns:
+        {
+            "contacts": [
+                {"contact": "<nom>", "contact_id": "<uuid>",
+                 "operations": [ {...}, ... ], "total_a_payer": float},
+                ...
+            ],   # triés par total_a_payer décroissant
+            "sans_contact": {"operations": [...], "total_a_payer": float},
+            "total_general": float,   # contacts + sans_contact
+            "has_open_payable": bool,
+        }
+    """
+    qs = (
+        Operation.objects.filter(
+            entreprise=entreprise,
+            transaction_type="DEPENSE",
+            statut_paiement="CREDIT",
+        )
+        .select_related("contact")
+        .order_by("contact__nom", "transaction_date")
+    )
+
+    par_contact = {}
+    sans_contact = {"operations": [], "total_a_payer": 0.0}
+    for op in qs:
+        serialized = _serialize_operation_ouverte(op)
+        if serialized["solde_restant"] <= 0:
+            continue
+        if op.contact_id is None:
+            cible = sans_contact
+        else:
+            cible = par_contact.setdefault(
+                op.contact_id,
+                {"contact": op.contact.nom, "contact_id": str(op.contact_id), "operations": [], "total_a_payer": 0.0},
+            )
+        cible["operations"].append(serialized)
+        cible["total_a_payer"] += serialized["solde_restant"]
+
+    contacts = sorted(par_contact.values(), key=lambda e: e["total_a_payer"], reverse=True)
+    total_general = sum((c["total_a_payer"] for c in contacts), 0.0) + sans_contact["total_a_payer"]
+
+    return {
+        "contacts": contacts,
+        "sans_contact": sans_contact,
+        "total_general": total_general,
+        "has_open_payable": total_general > 0,
+    }

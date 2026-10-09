@@ -114,6 +114,30 @@ Si un élément apparaît deux fois sur l'image, il doit apparaître deux fois d
 Si l'image est floue, inclinée, sombre, partiellement coupée ou de faible résolution, extrais uniquement ce qui peut réellement être lu.
 Ne compense jamais la mauvaise qualité par des suppositions.
 
+16. ÉMETTEUR ET CLIENT
+- "en_tete" décrit l'ÉMETTEUR du document : l'entreprise ou la personne qui vend ou facture (logo, en-tête, mentions "Fournisseur", "Vendeur", "Émetteur").
+- "client" décrit le DESTINATAIRE : mentions "Facturé à", "Client", "Destinataire", "Doit", "Livré à".
+- Si tu ne peux pas savoir avec certitude qui est l'émetteur et qui est le client, ne les inverse pas : utilise null pour les champs concernés.
+- N'invente pas de client sur un ticket de caisse qui n'en mentionne aucun : "client" reste alors avec des valeurs null.
+
+17. TYPE DE DOCUMENT, DEVISE, ÉCHÉANCE, IDENTIFIANTS
+- "type_document" : le libellé écrit sur le document ("Facture", "Facture pro forma", "Devis", "Reçu", "Ticket", "Bon de commande"...). Ne le déduis pas s'il n'est pas écrit.
+- "devise" : uniquement si une devise est visible (FCFA, XOF, CFA, F CFA, EUR, €, $...). Reproduis-la telle qu'écrite.
+- "date_echeance" : uniquement si une échéance ou une date limite de paiement est écrite.
+- "identifiant_fiscal" : reproduis tel quel NIF, IFU, RCCM ou numéro de TVA visibles.
+
+18. REMISES, ACOMPTE, RESTE À PAYER, TAXES
+- "remise" (ligne) et "remise_totale" : uniquement si une remise ou réduction est écrite.
+- "acompte_verse" : uniquement si un acompte, avance ou montant déjà versé est écrit.
+- "reste_a_payer" : uniquement si "Reste à payer", "Solde", "Net à payer" ou équivalent est écrit. Ne le calcule jamais.
+- "taxes_detail" : une entrée par taxe distincte visible (libellé, taux, montant tels qu'écrits). Ne fusionne pas des taxes différentes. Si une seule taxe est visible, remplis aussi "tva".
+- Les anciens champs "total_ht", "tva", "total_ttc" restent à remplir comme décrit à la règle 10.
+
+19. CHAMPS ILLISIBLES
+- "champs_illisibles" liste les champs du schéma dont tu vois qu'une information existe sur le document mais qu'elle est illisible, coupée ou trop incertaine (ex. "totaux.total_ttc", "en_tete.date", "lignes_articles[2].prix_total").
+- Si tout est net, retourne une liste vide.
+- Ne mets dans cette liste que des champs réellement présents mais illisibles, pas les champs simplement absents du document.
+
 SCHÉMA DE SORTIE
 
 Retourne exactement un objet JSON respectant cette structure :
@@ -124,22 +148,47 @@ Retourne exactement un objet JSON respectant cette structure :
     "adresse": null,
     "telephone": null,
     "date": null,
-    "numero_facture_recu": null
+    "numero_facture_recu": null,
+    "email": null,
+    "identifiant_fiscal": null,
+    "type_document": null,
+    "date_echeance": null,
+    "devise": null
+  },
+  "client": {
+    "nom": null,
+    "adresse": null,
+    "telephone": null,
+    "email": null,
+    "identifiant_fiscal": null
   },
   "lignes_articles": [
     {
       "designation": null,
       "quantite": null,
       "prix_unitaire": null,
-      "prix_total": null
+      "prix_total": null,
+      "remise": null,
+      "taux_tva": null
     }
   ],
   "totaux": {
     "total_ht": null,
     "tva": null,
     "total_ttc": null,
-    "moyen_de_paiement": null
+    "moyen_de_paiement": null,
+    "remise_totale": null,
+    "acompte_verse": null,
+    "reste_a_payer": null,
+    "taxes_detail": [
+      {
+        "libelle": null,
+        "taux": null,
+        "montant": null
+      }
+    ]
   },
+  "champs_illisibles": [],
   "texte_brut_complet": ""
 }
 
@@ -165,5 +214,7 @@ Avant de retourner le résultat, vérifie mentalement que :
 5. les champs structurés correspondent aux informations réellement visibles ;
 6. les valeurs ambiguës ou illisibles sont null ;
 7. le JSON est syntaxiquement valide ;
-8. la réponse contient uniquement le JSON.
+8. l'émetteur et le client ne sont pas inversés ;
+9. les champs présents mais illisibles sont listés dans "champs_illisibles" ;
+10. la réponse contient uniquement le JSON.
 """
