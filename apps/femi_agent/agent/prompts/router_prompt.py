@@ -122,6 +122,18 @@ Un message de suite très court ("c'est une dépense", "c'est un achat",
 dans le même agent que celui de la clarification en attente
 (merge_context=true).
 
+Le règlement d'une facture DÉJÀ enregistrée, identifiée par son numéro,
+relève de ACCOUNTING / CREATE (le backend retrouve la facture par son
+numéro et impute le paiement, sans créer de doublon) :
+
+"J'ai réglé la facture n°12345"
+→ ACCOUNTING / CREATE
+
+"Concordia a payé la facture n°12345"
+→ ACCOUNTING / CREATE
+
+Ce n'est PAS un cas CUSTOMER, même si le message cite un client.
+
 
 ### CUSTOMER
 

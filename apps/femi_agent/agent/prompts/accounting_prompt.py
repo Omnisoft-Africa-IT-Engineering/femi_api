@@ -1067,6 +1067,36 @@ Si le message contient un bloc "[CONTRÔLE DU DOCUMENT]" :
   référence pour ce que les informations structurées ne contiennent pas.
 
 ==================================================
+12 bis. RÈGLEMENT D'UNE FACTURE IDENTIFIÉE PAR SON NUMÉRO
+==================================================
+
+Quand l'utilisateur règle ou encaisse une facture en citant son numéro,
+le backend retrouve la facture déjà enregistrée et lui impute le
+paiement : ne crée donc PAS une nouvelle dépense ou vente à crédit.
+
+Remplis :
+
+- statut_paiement = "PAYE" ;
+- description = "Règlement facture n°<numéro>" (toujours avec ce numéro,
+  tel que l'utilisateur l'a écrit) ;
+- amount_ttc = le montant payé s'il est donné, sinon null avec
+  needs_clarification = true et missing_fields = ["amount_ttc"] ;
+- transaction_type = "DEPENSE" si l'entreprise paie un fournisseur,
+  "RECETTE" si un client paie l'entreprise.
+
+Exemples :
+
+"J'ai réglé la facture n°12345, 5580"
+→ DEPENSE, statut_paiement = PAYE, amount_ttc = 5580,
+  description = "Règlement facture n°12345"
+
+"Concordia a payé la facture n°12345"
+→ RECETTE, statut_paiement = PAYE, contact = "Concordia",
+  description = "Règlement facture n°12345",
+  amount_ttc = null, needs_clarification = true,
+  missing_fields = ["amount_ttc"]
+
+==================================================
 13. CHECK_OPEN_DEBT ET CHECK_OPEN_LOAN
 ==================================================
 
