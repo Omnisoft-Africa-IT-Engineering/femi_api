@@ -54,6 +54,29 @@ from apps.femi_agent.schemas.tool_loop import FinalAnswerOutput, ToolSelectionOu
 
 logger = logging.getLogger(__name__)
 
+# Ajouté à la fin du prompt à l'étape final_answer. Le prompt est le même
+# qu'à l'étape tool_selection (seul {tool_results} est remplacé) : sans cette
+# consigne, le modèle ne sait pas à quelle étape il est et renvoie parfois
+# "step": "validation" ou "tool_selection" au lieu de "final_answer".
+_FINAL_STAGE_SUFFIX = """
+
+==================================================
+ÉTAPE ACTUELLE : final_answer
+==================================================
+
+Les tools ont DÉJÀ été exécutés : l'étape de sélection des tools est
+terminée et leurs résultats sont fournis dans ce prompt.
+
+Produis maintenant UNIQUEMENT la réponse finale :
+- "step" doit valoir exactement "final_answer" (jamais "validation" ni
+  "tool_selection") ;
+- "answer" : réponse rédigée à partir des résultats des tools uniquement ;
+- "key_figures" : chiffres provenant des résultats des tools.
+
+La demande a déjà été routée vers cet agent : ne signale pas de mauvais
+routage.
+"""
+
 LOG_TEXT_PREVIEW_LEN = 80
 
 
@@ -234,7 +257,10 @@ class ToolLoopExecutor:
         """
         tool_results = ToolLoopExecutor._run_tools(selection, tool_registry, log_prefix)
 
-        final_prompt = prompt_text.replace("{tool_results}", json.dumps(tool_results, ensure_ascii=False))
+        final_prompt = (
+            prompt_text.replace("{tool_results}", json.dumps(tool_results, ensure_ascii=False))
+            + _FINAL_STAGE_SUFFIX
+        )
 
         return StructuredLLMExecutor.execute(
             prompt_text=final_prompt,
@@ -257,7 +283,10 @@ class ToolLoopExecutor:
         """Version asynchrone de resolve()."""
         tool_results = ToolLoopExecutor._run_tools(selection, tool_registry, log_prefix)
 
-        final_prompt = prompt_text.replace("{tool_results}", json.dumps(tool_results, ensure_ascii=False))
+        final_prompt = (
+            prompt_text.replace("{tool_results}", json.dumps(tool_results, ensure_ascii=False))
+            + _FINAL_STAGE_SUFFIX
+        )
 
         return await StructuredLLMExecutor.aexecute(
             prompt_text=final_prompt,
@@ -292,6 +321,8 @@ class ToolLoopExecutor:
         générique et sûr est exposé au LLM.
         """
         results = {}
+        if not selection.tool_calls:
+            logger.warning("[%s] Aucun tool sélectionné par le LLM.", log_prefix)
         for call in selection.tool_calls:
             if call.tool not in tool_registry:
                 logger.warning(
@@ -302,6 +333,13 @@ class ToolLoopExecutor:
                 continue
             try:
                 results[call.tool] = tool_registry[call.tool](**call.params)
+                # Diagnostic temporaire, tronqué. Niveau WARNING car
+                # core/settings.py ne définit pas LOGGING : les INFO
+                # n'apparaissent pas dans les logs Render.
+                logger.warning(
+                    "[%s] tool '%s' params=%s -> %s",
+                    log_prefix, call.tool, call.params, str(results[call.tool])[:400],
+                )
             except Exception:
                 logger.exception("[%s] Échec d'exécution du tool '%s'", log_prefix, call.tool)
                 results[call.tool] = {"success": False, "error": "erreur technique lors de l'exécution du tool"}
