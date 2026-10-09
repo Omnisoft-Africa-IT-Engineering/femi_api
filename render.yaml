@@ -27,16 +27,23 @@ services:
         sync: false
 
       # --- LLM ---
+      # Valeurs gérées dans le dashboard Render (sync: false) : une valeur
+      # fixe écrite ici écrase celle du dashboard à chaque synchronisation
+      # du Blueprint (c'est ce qui a remis le provider sur cloudflare).
       - key: FEMI_LLM_PROVIDER
-        value: cloudflare
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
       - key: CLOUDFLARE_ACCOUNT_ID
         sync: false
       - key: CLOUDFLARE_API_KEY
         sync: false
 
       # --- Vision (OCR) ---
+      - key: FEMI_VISION_PROVIDER
+        sync: false
       - key: FEMI_VISION_MODEL
-        value: "@cf/meta/llama-3.2-11b-vision-instruct"
+        sync: false
 
       # --- Audio (STT) ---
       - key: FEMI_STT_ENGINE
