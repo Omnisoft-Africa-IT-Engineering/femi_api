@@ -33,8 +33,6 @@ from apps.femi_account.models import (
     PieceJustificative,
     Utilisateur,
 )
-from apps.femi_agent.agent.response_writer import write_natural_reply
-
 
 from apps.femi_agent.agent.accounting_executor import AccountingExecutor
 from apps.femi_agent.agent.customer_executor import CustomerExecutor
@@ -89,6 +87,7 @@ from apps.femi_agent.schemas import (
     AccountingModifySearchResult,
     CustomerExtractionOutput,
     FinalAnswerOutput,
+    QuoteExtractionResult,
     RouterIntent,
     RouterOutput,
     RouterProcessResult,
@@ -107,6 +106,7 @@ DispatchResult = Optional[
     | AccountingModifySearchResult
     | AccountingModifyResolutionResult
     | AccountingModifyProposeChangeResult
+    | QuoteExtractionResult
 ]
 
 
@@ -1052,11 +1052,9 @@ class FemiRouterManager:
                 ),
             )
 
- 
         if intent.agent == "QUOTE":
             result = QuoteExecutor.execute(text, entreprise)
             return result, getattr(result, "needs_clarification", False)
-        
 
         logger.warning(
             "[FemiRouterManager] "
@@ -1146,6 +1144,10 @@ class FemiRouterManager:
                 ),
             )
 
+        if intent.agent == "QUOTE":
+            result = await QuoteExecutor.aexecute(text, entreprise)
+            return result, getattr(result, "needs_clarification", False)
+
         logger.warning(
             "[FemiRouterManager] "
             "Agent '%s' pas encore implémenté "
@@ -1204,151 +1206,59 @@ class FemiRouterManager:
         return f"{formatted} {devise}"
 
     @classmethod
-    def _summarize_accounting_transactions(
-            cls, result: AccountingExtractionResult
-        ) -> list[str]:
-            if not result.transactions:
-                return []
-
-            fact_lines: list[str] = []
-            fallback_lines: list[str] = []
-
-            for txn in result.transactions:
-                label = cls._TRANSACTION_TYPE_LABELS.get(
-                    txn.transaction_type, txn.transaction_type
-                )
-                montant = cls._format_montant(txn.amount_ttc, txn.currency)
-                extra = f" ({txn.category})" if txn.category else ""
-                contact = f" — {txn.contact}" if txn.contact else ""
-
-                # Description métier (ex: "2 sacs de riz", "carburant Zem")
-                raw_desc = (getattr(txn, "description", None) or "").strip()
-                desc_fact = raw_desc if raw_desc else "n/a"
-                desc_fallback = f" — {raw_desc}" if raw_desc else ""
-
-                statut = getattr(txn, "statut_paiement", "PAYE")
-                avance = getattr(txn, "montant_deja_paye", None)
-                payment_method = getattr(txn, "payment_method", None)
-                payment_method_str = (
-                    payment_method.value
-                    if hasattr(payment_method, "value")
-                    else (str(payment_method) if payment_method else "n/a")
-                )
-                date_op = getattr(txn, "date_operation", None)
-
-                # ---- faits structurés pour le LLM ----
-                fact = (
-                    f"- type: {label}; montant_ttc: {montant}; "
-                    f"description: {desc_fact}; "
-                    f"categorie: {txn.category or 'n/a'}; "
-                    f"contact: {txn.contact or 'n/a'}; "
-                    f"mode_paiement: {payment_method_str}; "
-                    f"date: {date_op or 'n/a'}; "
-                    f"statut_paiement: {statut}"
-                )
-                if avance is not None:
-                    fact += (
-                        f"; montant_deja_paye: "
-                        f"{cls._format_montant(avance, txn.currency)}"
-                    )
-                    if (
-                        txn.amount_ttc is not None
-                        and avance is not None
-                        and 0 < float(avance) < float(txn.amount_ttc)
-                    ):
-                        reste = cls._format_montant(
-                            txn.amount_ttc - avance, txn.currency
-                        )
-                        fact += f"; reste_a_payer_ou_encaisser: {reste}"
-                elif statut == "CREDIT" and txn.amount_ttc is not None:
-                    fact += f"; reste_a_payer_ou_encaisser: {montant}"
-                fact_lines.append(fact)
-
-                # ---- fallback template (si LLM down) ----
-                # Ordre lisible : type + description + montant + contact
-                if (
-                    statut == "CREDIT"
-                    and avance is not None
-                    and txn.amount_ttc is not None
-                    and 0 < float(avance) < float(txn.amount_ttc)
-                    and txn.transaction_type in ("RECETTE", "DEPENSE")
-                ):
-                    reste = cls._format_montant(
-                        txn.amount_ttc - avance, txn.currency
-                    )
-                    deja = cls._format_montant(avance, txn.currency)
-                    if txn.transaction_type == "RECETTE":
-                        fallback_lines.append(
-                            f"✅ Vente{desc_fallback} de {montant}{extra}{contact} enregistrée.\n"
-                            f"Avance reçue : {deja}. Il reste {reste} à encaisser."
-                        )
-                    else:
-                        fallback_lines.append(
-                            f"✅ Achat{desc_fallback} de {montant}{extra}{contact} enregistré.\n"
-                            f"Avance versée : {deja}. Il reste {reste} à payer."
-                        )
-                elif statut == "CREDIT" and txn.transaction_type == "RECETTE":
-                    fallback_lines.append(
-                        f"✅ Vente à crédit{desc_fallback} de {montant}{extra}{contact} enregistrée.\n"
-                        f"Créance client : {montant} restent à encaisser."
-                    )
-                elif statut == "CREDIT" and txn.transaction_type == "DEPENSE":
-                    fallback_lines.append(
-                        f"✅ Achat à crédit{desc_fallback} de {montant}{extra}{contact} enregistré.\n"
-                        f"Dette fournisseur : {montant} restent à payer."
+    def _summarize_accounting_transactions(cls, result: AccountingExtractionResult) -> list[str]:
+        lines = []
+        for txn in result.transactions:
+            label = cls._TRANSACTION_TYPE_LABELS.get(txn.transaction_type, txn.transaction_type)
+            montant = cls._format_montant(txn.amount_ttc, txn.currency)
+            extra = f" ({txn.category})" if txn.category else ""
+            contact = f" — {txn.contact}" if txn.contact else ""
+            statut = getattr(txn, "statut_paiement", "PAYE")
+            avance = getattr(txn, "montant_deja_paye", None)
+            if (
+                statut == "CREDIT"
+                and avance
+                and txn.amount_ttc
+                and 0 < avance < txn.amount_ttc
+                and txn.transaction_type in ("RECETTE", "DEPENSE")
+            ):
+                reste = cls._format_montant(txn.amount_ttc - avance, txn.currency)
+                deja = cls._format_montant(avance, txn.currency)
+                if txn.transaction_type == "RECETTE":
+                    lines.append(
+                        f"✅ Vente de {montant}{extra}{contact} enregistrée.\n"
+                        f"Avance reçue : {deja}. Il reste {reste} à encaisser."
                     )
                 else:
-                    # Evite "Recette de 15 000 — 2 sacs — enregistrée"
-                    # → "Recette — 2 sacs de riz — 15 000 FCFA enregistrée."
-                    if raw_desc:
-                        fallback_lines.append(
-                            f"✅ {label}{desc_fallback} : {montant}{extra}{contact} enregistrée."
-                        )
-                    else:
-                        fallback_lines.append(
-                            f"✅ {label} de {montant}{extra}{contact} enregistrée."
-                        )
-
-            facts = (
-                "Opération(s) comptable(s) enregistrée(s) avec succès :\n"
-                + "\n".join(fact_lines)
-                + "\n\nIntègre la description dans la phrase de confirmation "
-                "quand elle est pertinente (pas 'n/a')."
-            )
-            fallback = "\n".join(fallback_lines)
-
-            natural = write_natural_reply(
-                facts=facts,
-                reply_type="accounting_success",
-                fallback=fallback,
-                temperature=0.7,
-            )
-            return [natural]
+                    lines.append(
+                        f"✅ Achat de {montant}{extra}{contact} enregistré.\n"
+                        f"Avance versée : {deja}. Il reste {reste} à payer."
+                    )
+            elif statut == "CREDIT" and txn.transaction_type == "RECETTE":
+                lines.append(
+                    f"✅ Vente à crédit de {montant}{extra}{contact} enregistrée.\n"
+                    f"Créance client : {montant} restent à encaisser."
+                )
+            elif statut == "CREDIT" and txn.transaction_type == "DEPENSE":
+                lines.append(
+                    f"✅ Achat à crédit de {montant}{extra}{contact} enregistré.\n"
+                    f"Dette fournisseur : {montant} restent à payer."
+                )
+            else:
+                lines.append(f"✅ {label} de {montant}{extra}{contact} enregistrée.")
+        return lines
 
     @classmethod
     def _summarize_customer_payment(cls, result: CustomerExtractionOutput) -> str:
         montant = cls._format_montant(result.amount_ttc, result.currency)
         contact = result.contact or "ce contact"
-        raw_desc = (getattr(result, "description", None) or "").strip()
-        desc_fallback = f" ({raw_desc})" if raw_desc else ""
+        return f"✅ Paiement de {montant} enregistré pour {contact}."
 
-        fallback = (
-            f"✅ Paiement de {montant}{desc_fallback} enregistré pour {contact}."
-        )
-        facts = (
-            f"Paiement client/fournisseur enregistré avec succès.\n"
-            f"- montant: {montant}\n"
-            f"- contact: {contact}\n"
-            f"- description: {raw_desc or 'n/a'}\n"
-            f"- currency: {result.currency or 'FCFA'}"
-        )
-        return write_natural_reply(
-            facts=facts,
-            reply_type="customer_payment_success",
-            fallback=fallback,
-            temperature=0.7,
-        )
-
+    @classmethod
+    def _summarize_quotes(cls, result: QuoteExtractionResult) -> str:
+        montant = cls._format_montant(getattr(result, "montant_ttc", None), getattr(result, "currency", "FCFA"))
+        client = getattr(result, "client_name", "le client")
+        return f"📄 Devis généré avec succès pour {client} d'un montant de {montant}."
 
     @staticmethod
     def _summarize_propose_change(result: AccountingModifyProposeChangeResult) -> str:
@@ -1372,11 +1282,6 @@ class FemiRouterManager:
     # ------------------------------------------------------------
     # QUESTIONS DE CLARIFICATION (codes missing_fields → français clair)
     # ------------------------------------------------------------
-    # Les codes viennent des prompts (ROUTER, ACCOUNTING, ACCOUNTING_MODIFY,
-    # CUSTOMER, FINANCIAL_ANALYST). L'utilisateur ne doit JAMAIS voir un nom
-    # de champ technique. Ordre = priorité : ce qui bloque l'enregistrement
-    # d'abord. Texte fixe (pas de LLM) : réponse identique et fiable pour
-    # une application comptable.
     _MISSING_FIELD_QUESTIONS = {
         "transaction_type": "Dis-moi, c'est une vente que tu as faite, ou un achat pour ton activité ? (Si c'est un prêt, précise-le-moi.)",
         "amount_ttc": "Quel est le montant total, s'il te plaît ?",
@@ -1399,10 +1304,10 @@ class FemiRouterManager:
         "annee": "Pour quelle année ?",
         "wrong_agent": "Peux-tu reformuler ta demande en précisant ce que tu veux faire ?",
         "search_error": "Je n'ai pas réussi à retrouver cette information. Peux-tu reformuler ?",
+        "client_name": "Pour quel client faut-il établir ce devis ?",
+        "quote_items": "Quels sont les articles ou services à inclure dans ce devis ainsi que leurs prix ?",
     }
 
-    # Codes déjà rendus ailleurs (liste de candidats) ou propres à un autre
-    # message : jamais transformés en question ici.
     _CLARIFICATION_SKIP_CODES = {"fonctionnalite_non_disponible", "operation_disambiguation"}
 
     @classmethod
@@ -1435,11 +1340,6 @@ class FemiRouterManager:
         missing_fields: list[str],
         accounting_results=None,
     ) -> str | None:
-        """Question(s) en français à partir des codes missing_fields.
-
-        Retourne None s'il n'y a rien à demander. Un code inconnu ne produit
-        jamais son nom technique : il est remplacé par une demande générique.
-        """
         questions: list[str] = []
         has_unknown = False
         for code in missing_fields:
@@ -1472,31 +1372,28 @@ class FemiRouterManager:
         financial_analyst_results: list,
         accounting_modify_results: list,
         customer_results: list,
+        quote_results: list[QuoteExtractionResult],
         needs_clarification: bool,
         missing_fields: list[str],
     ) -> str:
-        """Assemble le message réellement envoyé à l'utilisateur (WhatsApp et
-        application mobile) à partir des résultats structurés des agents."""
         lines: list[str] = []
 
-        # 1. Réponses conversationnelles déjà rédigées par un agent
-        #    (FinancialAnalystExecutor ou sous-flux READ de CustomerExecutor).
         for result in list(financial_analyst_results) + list(customer_results):
             if isinstance(result, FinalAnswerOutput):
                 lines.append(result.answer)
 
-        # 2. Transactions comptables effectivement enregistrées (ACCOUNTING).
         for result in accounting_results:
             if not result.needs_clarification:
                 lines.extend(cls._summarize_accounting_transactions(result))
 
-        # 3. Paiement client/fournisseur enregistré (CUSTOMER, sous-flux CREATE).
         for result in customer_results:
             if isinstance(result, CustomerExtractionOutput) and not result.needs_clarification:
                 lines.append(cls._summarize_customer_payment(result))
 
-        # 4. Propositions de modification/suppression (ACCOUNTING_MODIFY),
-        #    ou liste de candidats en cas d'ambiguïté.
+        for result in quote_results:
+            if not result.needs_clarification:
+                lines.append(cls._summarize_quotes(result))
+
         for result in accounting_modify_results:
             if isinstance(result, AccountingModifyProposeChangeResult):
                 lines.append(cls._summarize_propose_change(result))
@@ -1504,8 +1401,6 @@ class FemiRouterManager:
                 lines.append(cls._summarize_candidates(result))
 
         if lines:
-            # Une opération du lot peut être enregistrée pendant qu'une autre
-            # attend une précision : ne pas perdre la question.
             if needs_clarification:
                 clarification = cls._build_clarification_message(
                     missing_fields, accounting_results
@@ -1514,9 +1409,6 @@ class FemiRouterManager:
                     lines.append(clarification)
             return "\n\n".join(lines)
 
-        # 5. Rien de concret à annoncer : soit une clarification est
-        #    nécessaire, soit la demande n'a pas pu être rattachée à un agent
-        #    connu (question hors-sujet, intent SETTINGS/UNKNOWN...).
         if needs_clarification:
             if "fonctionnalite_non_disponible" in missing_fields:
                 return (
@@ -1583,6 +1475,10 @@ class FemiRouterManager:
 
         accounting_results: list[
             AccountingExtractionResult
+        ] = []
+
+        quote_results: list[
+            QuoteExtractionResult
         ] = []
 
         financial_analyst_results: list[
@@ -1745,25 +1641,21 @@ class FemiRouterManager:
                     ">>> AccountingExtractionResult détecté"
                 )
 
-                logger.info(
-                    "[FemiRouterManager] "
-                    "Accounting result=%s",
-                    result,
-                )
-
-                logger.info(
-                    "[FemiRouterManager] "
-                    "Accounting needs_clarification=%s",
-                    getattr(
-                        result,
-                        "needs_clarification",
-                        None,
-                    ),
-                )
-
                 accounting_results.append(
                     result
                 )
+
+            elif isinstance(
+                result,
+                QuoteExtractionResult,
+            ):
+
+                logger.info(
+                    "[FemiRouterManager] "
+                    ">>> QuoteExtractionResult détecté"
+                )
+
+                quote_results.append(result)
 
             elif isinstance(
                 result,
@@ -2099,6 +1991,7 @@ class FemiRouterManager:
                 financial_analyst_results=financial_analyst_results,
                 accounting_modify_results=accounting_modify_results,
                 customer_results=customer_results,
+                quote_results=quote_results,
                 needs_clarification=needs_clarification,
                 missing_fields=missing_fields,
             ),
@@ -2363,6 +2256,10 @@ class FemiRouterManager:
             AccountingExtractionResult
         ] = []
 
+        quote_results: list[
+            QuoteExtractionResult
+        ] = []
+
         financial_analyst_results: list[
             ToolSelectionOutput | FinalAnswerOutput
         ] = []
@@ -2434,6 +2331,13 @@ class FemiRouterManager:
                 accounting_results.append(
                     result
                 )
+
+            elif isinstance(
+                result,
+                QuoteExtractionResult,
+            ):
+
+                quote_results.append(result)
 
             elif isinstance(
                 result,
@@ -2532,6 +2436,7 @@ class FemiRouterManager:
                 financial_analyst_results=financial_analyst_results,
                 accounting_modify_results=accounting_modify_results,
                 customer_results=customer_results,
+                quote_results=quote_results,
                 needs_clarification=needs_clarification,
                 missing_fields=missing_fields,
             ),
@@ -2637,5 +2542,3 @@ class FemiRouterManager:
                     "l'opération %s",
                     operation.id,
                 )
-
-

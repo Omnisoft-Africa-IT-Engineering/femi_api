@@ -90,3 +90,4 @@ class DevisCreateSerializer(serializers.ModelSerializer):
             
         devis.calculer_total()
         return devis
+
