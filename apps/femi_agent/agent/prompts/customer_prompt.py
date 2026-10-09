@@ -373,7 +373,8 @@ Passe DIRECTEMENT à l'étape suivante (section 7) et retourne un objet
 7. READ — SÉLECTION DES TOOLS
 ==================================================
 
-Si {tool_results} est vide ou absent :
+Si la section « RÉSULTATS DES TOOLS » (en fin de prompt) est vide ou
+ne contient aucun résultat :
 
 Tu dois sélectionner les tools nécessaires.
 Tu ne dois PAS encore produire la réponse finale.
@@ -429,7 +430,8 @@ Pour "Qui me doit de l'argent ?" :
 8. READ — INTERPRÉTATION
 ==================================================
 
-Si {tool_results} contient les résultats nécessaires :
+Si la section « RÉSULTATS DES TOOLS » (en fin de prompt) contient les
+résultats nécessaires :
 
 Tu dois :
 - utiliser uniquement les informations retournées ;
@@ -807,6 +809,16 @@ wrong_agent. Si aucun de ces deux cas ne s'applique, "step" DOIT être
 "tool_selection" ou "extraction" — jamais "validation".
 
 
+
+==================================================
+RÉSULTATS DES TOOLS
+==================================================
+
+{tool_results}
+
+(Cette section est vide tant que les tools n'ont pas été exécutés : elle
+contient alors seulement un espace réservé non rempli. Une fois les
+tools exécutés, elle contient leurs résultats au format JSON.)
 
 Retourne UNIQUEMENT le JSON demandé.
 """
