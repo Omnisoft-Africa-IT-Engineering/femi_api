@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 import io
 import logging
-
+import uuid
 from django.contrib.auth import authenticate
 from django.db import connection, transaction
 from django.db.models import Q, Sum
@@ -417,6 +417,28 @@ class RegistreJournalierAPIView(APIView):
             entreprise=entreprise
         )
 
+                # --- Filtre par employé ---
+        role_user = (request.user.role or "").strip().upper()
+        utilisateur_id = request.query_params.get('utilisateur_id')
+
+        if role_user == "EMPLOYE":
+            # Un employé ne voit que ce qu'il a lui-même enregistré
+            queryset = queryset.filter(utilisateur=request.user)
+        elif utilisateur_id:
+            try:
+                uuid.UUID(str(utilisateur_id))
+            except ValueError:
+                return Response(
+                    {"error": "utilisateur_id invalide."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if not Utilisateur.objects.filter(id=utilisateur_id, entreprise=entreprise).exists():
+                return Response(
+                    {"error": "Employé introuvable dans votre entreprise."},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            queryset = queryset.filter(utilisateur_id=utilisateur_id)
+
         if date_debut:
             queryset = queryset.filter(
                 transaction_date__gte=date_debut
@@ -436,8 +458,15 @@ class RegistreJournalierAPIView(APIView):
             queryset = queryset.filter(
                 created_at__date__lte=saisie_fin
             )
-
-        queryset = queryset.order_by('-transaction_date')
+        type_param = (request.query_params.get('type') or '').strip().upper()
+        if type_param:
+            if type_param not in {"RECETTE", "DEPENSE", "PRET_DONNE", "PRET_RECU"}:
+                return Response(
+                    {"error": "type invalide."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            queryset = queryset.filter(transaction_type__iexact=type_param)
+            queryset = queryset.select_related('utilisateur').order_by('-transaction_date')
 
         # ============================================================
         # CALCUL DES TOTAUX
@@ -553,6 +582,12 @@ class RegistreJournalierAPIView(APIView):
                     float(op.amount_ttc)
                     if op.amount_ttc is not None
                     else 0.0
+                ),
+
+                "saisi_par": (
+                    (op.utilisateur.full_name or op.utilisateur.username)
+                    if op.utilisateur
+                    else None
                 ),
             })
 

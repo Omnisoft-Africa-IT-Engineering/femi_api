@@ -19,6 +19,17 @@ class Utilisateur(AbstractUser):
         related_name="utilisateurs"
     )
     role = models.CharField(max_length=50, blank=True, null=True)
+    poste = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        help_text="Intitulé affiché (ex. Serveuse). N'a aucun effet sur les droits, qui dépendent de role."
+    )
+
+    # Activation du compte employé : code à usage unique, stocké haché.
+    code_activation_hash = models.CharField(max_length=128, blank=True, null=True)
+    code_activation_expire = models.DateTimeField(blank=True, null=True)
+    code_activation_essais = models.PositiveSmallIntegerField(default=0)
     telephone_whatsapp = models.CharField(max_length=30, blank=True, null=True)
 
     class Meta:
@@ -162,6 +173,14 @@ class Operation(models.Model):
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
+    utilisateur = models.ForeignKey(
+        'Utilisateur',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="operations",
+        help_text="Employé qui a enregistré l'opération (null pour les anciennes opérations)."
+    )
 
     class Meta:
         verbose_name = "Opération"
