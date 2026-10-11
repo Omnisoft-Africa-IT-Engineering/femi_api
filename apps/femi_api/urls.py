@@ -22,6 +22,11 @@ from apps.femi_api.views import (
     ConfigAPIView,
 )
 
+from apps.femi_api.views_devis import (
+    DevisDetailAPIView,
+    DevisListCreateAPIView,
+    DevisPDFAPIView,
+)
 from apps.femi_api.views_utilisateurs import (
     CreerUtilisateurEntrepriseAPIView,
     ActiverCompteAPIView,
@@ -57,4 +62,7 @@ urlpatterns = [
     path('equipe/', EquipeAPIView.as_view(), name='api_equipe'),
     path('equipe/<uuid:utilisateur_id>/', FicheEmployeAPIView.as_view(), name='api_equipe_fiche'),
     path('equipe/<uuid:utilisateur_id>/statut/', StatutEmployeAPIView.as_view(), name='api_equipe_statut'),
+    path('devis/', DevisListCreateAPIView.as_view(), name='api_devis_list_create'),
+    path('devis/<int:pk>/', DevisDetailAPIView.as_view(), name='api_devis_detail'),
+    path('devis/<int:pk>/pdf/', DevisPDFAPIView.as_view(), name='api_devis_pdf'),
     ]

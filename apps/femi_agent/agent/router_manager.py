@@ -25,6 +25,7 @@ from typing import Optional, Tuple
 
 from asgiref.sync import sync_to_async
 
+from apps.femi_account.devis_service import DevisInvalideError, creer_devis
 from apps.femi_account.models import (
     Conversation,
     Entreprise,
@@ -37,6 +38,7 @@ from apps.femi_agent.agent.response_writer import write_natural_reply
 
 from apps.femi_agent.agent.accounting_executor import AccountingExecutor
 from apps.femi_agent.agent.customer_executor import CustomerExecutor
+from apps.femi_agent.agent.quote_executor import QuoteExecutor
 from apps.femi_agent.agent.financial_analyst_executor import (
     FinancialAnalystExecutor,
 )
@@ -99,6 +101,7 @@ from apps.femi_agent.schemas import (
     AccountingModifySearchResult,
     CustomerExtractionOutput,
     FinalAnswerOutput,
+    QuoteExtractionResult,
     RouterIntent,
     RouterOutput,
     RouterProcessResult,
@@ -122,6 +125,7 @@ DispatchResult = Optional[
     | AccountingModifySearchResult
     | AccountingModifyResolutionResult
     | AccountingModifyProposeChangeResult
+    | QuoteExtractionResult
 ]
 
 
@@ -1027,6 +1031,18 @@ class FemiRouterManager:
                 ),
             )
 
+        if intent.agent == "QUOTE":
+
+            result = QuoteExecutor.execute(
+                text,
+                entreprise,
+            )
+
+            return (
+                result,
+                result.needs_clarification,
+            )
+
         logger.warning(
             "[FemiRouterManager] "
             "Agent '%s' pas encore implémenté "
@@ -1113,6 +1129,18 @@ class FemiRouterManager:
                     "needs_clarification",
                     False,
                 ),
+            )
+
+        if intent.agent == "QUOTE":
+
+            result = await QuoteExecutor.aexecute(
+                text,
+                entreprise,
+            )
+
+            return (
+                result,
+                result.needs_clarification,
             )
 
         logger.warning(
@@ -1389,6 +1417,87 @@ class FemiRouterManager:
             f"enregistrée{quand}. Je ne l'ai pas enregistrée une deuxième fois."
         )
 
+    @staticmethod
+    def _persist_quote_results(
+        quote_results: list[QuoteExtractionResult],
+        entreprise: Entreprise,
+    ) -> Tuple[list[dict], list[str]]:
+        """Crée en base les devis complets (sans clarification en attente).
+
+        Les montants sont calculés par le backend (creer_devis). Retourne
+        (faits de chaque devis créé, messages d'erreur à afficher). Les faits
+        sont de simples valeurs (aucune requête à relire plus tard) : cette
+        méthode tourne dans un thread sync, alors que le message final peut
+        être assemblé dans un contexte async.
+        """
+        devis_crees: list[dict] = []
+        erreurs: list[str] = []
+        for result in quote_results:
+            if result.needs_clarification:
+                continue
+            try:
+                devis = creer_devis(
+                    entreprise,
+                    lignes=[
+                        {
+                            "description": ligne.description,
+                            "quantite": ligne.quantite,
+                            "prix_unitaire": ligne.prix_unitaire,
+                        }
+                        for ligne in result.lignes
+                    ],
+                    client_nom=result.client_nom,
+                )
+                devise = getattr(entreprise, "devise", None) or "FCFA"
+                devis_crees.append(
+                    {
+                        "reference": devis.reference,
+                        "client": devis.client.nom if devis.client else None,
+                        "nb_lignes": len(result.lignes),
+                        "total": devis.montant_total,
+                        "devise": {"XOF": "FCFA", "XAF": "FCFA"}.get(
+                            devise.upper(), devise
+                        ),
+                    }
+                )
+            except DevisInvalideError as exc:
+                logger.warning("[FemiRouterManager] Devis refusé : %s", exc)
+                erreurs.append(f"Je n'ai pas pu créer le devis : {exc}")
+        return devis_crees, erreurs
+
+    @staticmethod
+    def _summarize_devis(infos: dict, user_message: str = "") -> str:
+        """Confirmation d'un devis créé, rédigée naturellement à partir des faits
+        préparés par _persist_quote_results (aucun accès base ici)."""
+        total = infos["total"]
+        total_txt = (
+            f"{total:,.0f}" if total == total.to_integral_value() else f"{total:,.2f}"
+        ).replace(",", " ")
+        montant = f"{total_txt} {infos['devise']}"
+        client = infos["client"] or "le client"
+        nb = infos["nb_lignes"]
+        articles = "1 ligne" if nb == 1 else f"{nb} lignes"
+
+        fallback = (
+            f"✅ Devis {infos['reference']} créé pour {client} : {articles}, "
+            f"total {montant}. Il est en brouillon ; tu peux le télécharger "
+            f"en PDF depuis l'application."
+        )
+        facts = (
+            "Devis créé avec succès (statut brouillon).\n"
+            f"- référence: {infos['reference']}\n"
+            f"- client: {client}\n"
+            f"- nombre de lignes: {nb}\n"
+            f"- total: {montant}\n"
+            "- le PDF se télécharge depuis l'application, section Devis"
+        )
+        return write_natural_reply(
+            facts=facts,
+            reply_type="quote_success",
+            user_message=user_message,
+            fallback=fallback,
+        )
+
     @classmethod
     def _summarize_customer_payment(cls, result: CustomerExtractionOutput) -> str:
         montant = cls._format_montant(result.amount_ttc, result.currency)
@@ -1506,6 +1615,9 @@ class FemiRouterManager:
         "annee": "Pour quelle année ?",
         "wrong_agent": "Peux-tu reformuler ta demande en précisant ce que tu veux faire ?",
         "search_error": "Je n'ai pas réussi à retrouver cette information. Peux-tu reformuler ?",
+        "client_name": "Pour quel client est ce devis ?",
+        "quote_items": "Quels articles ou services veux-tu mettre sur ce devis, avec leurs quantités et leurs prix ?",
+        "quote_price": "Quel est le prix unitaire de chaque article du devis ?",
     }
 
     # Codes déjà rendus ailleurs (liste de candidats) ou propres à un autre
@@ -1635,6 +1747,8 @@ class FemiRouterManager:
         needs_clarification: bool,
         missing_fields: list[str],
         user_message: str = "",
+        devis_crees: Optional[list] = None,
+        quote_erreurs: Optional[list] = None,
     ) -> str:
         """Assemble le message réellement envoyé à l'utilisateur (WhatsApp et
         application mobile) à partir des résultats structurés des agents."""
@@ -1655,6 +1769,11 @@ class FemiRouterManager:
         for result in customer_results:
             if isinstance(result, CustomerExtractionOutput) and not result.needs_clarification:
                 lines.append(cls._summarize_customer_payment(result))
+
+        # 3 bis. Devis créés (QUOTE) ou refusés par la validation.
+        for devis in devis_crees or []:
+            lines.append(cls._summarize_devis(devis, user_message))
+        lines.extend(quote_erreurs or [])
 
         # 4. Propositions de modification/suppression (ACCOUNTING_MODIFY),
         #    ou liste de candidats en cas d'ambiguïté.
@@ -1787,6 +1906,8 @@ class FemiRouterManager:
             | ToolSelectionOutput
             | FinalAnswerOutput
         ] = []
+
+        quote_results: list[QuoteExtractionResult] = []
 
         logger.info(
             "[FemiRouterManager] "
@@ -1968,6 +2089,10 @@ class FemiRouterManager:
                 accounting_modify_results.append(
                     result
                 )
+
+            elif isinstance(result, QuoteExtractionResult):
+
+                quote_results.append(result)
 
             elif intent.agent == "CUSTOMER":
 
@@ -2247,6 +2372,14 @@ class FemiRouterManager:
                 needs_clarification,
             )
 
+        # --------------------------------------------------------
+        # Création des devis (QUOTE)
+        # --------------------------------------------------------
+
+        devis_crees, quote_erreurs = cls._persist_quote_results(
+            quote_results, entreprise
+        )
+
         # ========================================================
         # RESULTAT FINAL
         # ========================================================
@@ -2285,6 +2418,8 @@ class FemiRouterManager:
                 financial_analyst_results=financial_analyst_results,
                 accounting_modify_results=accounting_modify_results,
                 customer_results=customer_results,
+                devis_crees=devis_crees,
+                quote_erreurs=quote_erreurs,
                 needs_clarification=needs_clarification,
                 missing_fields=missing_fields,
                 user_message=raw_text,
@@ -2301,6 +2436,7 @@ class FemiRouterManager:
                 accounting_modify_results
             ),
             customer_results=customer_results,
+            quote_results=quote_results,
         )
 
     # ============================================================
@@ -2575,6 +2711,8 @@ class FemiRouterManager:
             | FinalAnswerOutput
         ] = []
 
+        quote_results: list[QuoteExtractionResult] = []
+
         # --------------------------------------------------------
         # Dispatch
         # --------------------------------------------------------
@@ -2642,6 +2780,10 @@ class FemiRouterManager:
                 accounting_modify_results.append(
                     result
                 )
+
+            elif isinstance(result, QuoteExtractionResult):
+
+                quote_results.append(result)
 
             elif intent.agent == "CUSTOMER":
 
@@ -2717,6 +2859,14 @@ class FemiRouterManager:
             ]
 
         # --------------------------------------------------------
+        # Création des devis (QUOTE)
+        # --------------------------------------------------------
+
+        devis_crees, quote_erreurs = await sync_to_async(
+            cls._persist_quote_results
+        )(quote_results, entreprise)
+
+        # --------------------------------------------------------
         # RESULTAT FINAL
         # --------------------------------------------------------
 
@@ -2727,6 +2877,8 @@ class FemiRouterManager:
                 financial_analyst_results=financial_analyst_results,
                 accounting_modify_results=accounting_modify_results,
                 customer_results=customer_results,
+                devis_crees=devis_crees,
+                quote_erreurs=quote_erreurs,
                 needs_clarification=needs_clarification,
                 missing_fields=missing_fields,
                 user_message=raw_text,
@@ -2743,6 +2895,7 @@ class FemiRouterManager:
                 accounting_modify_results
             ),
             customer_results=customer_results,
+            quote_results=quote_results,
         )
 
     # ============================================================

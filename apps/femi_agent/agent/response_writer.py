@@ -83,6 +83,13 @@ _REPLY_TYPE_HINTS = {
     "Ton chaleureux et clair."
 ),
 
+    "quote_success": (
+        "Confirme que le devis est créé, avec le client, le total et la "
+        "référence tels qu'ils sont dans les faits (sans recalculer). "
+        "Précise que c'est un brouillon et que le PDF se télécharge dans "
+        "l'application. Ton chaleureux, court."
+    ),
+
     "clarification": (
         "Demande la précision manquante de façon douce et claire. "
         "Si un récap de ce qui est déjà compris est fourni, commence par là. "
