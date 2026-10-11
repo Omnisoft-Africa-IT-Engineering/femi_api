@@ -22,6 +22,10 @@ from apps.femi_api.views import (
     ConfigAPIView,
 )
 
+from apps.femi_api.views_conversations import (
+    ConversationListAPIView,
+    ConversationMessagesAPIView,
+)
 from apps.femi_api.views_devis import (
     DevisDetailAPIView,
     DevisListCreateAPIView,
@@ -62,6 +66,8 @@ urlpatterns = [
     path('equipe/', EquipeAPIView.as_view(), name='api_equipe'),
     path('equipe/<uuid:utilisateur_id>/', FicheEmployeAPIView.as_view(), name='api_equipe_fiche'),
     path('equipe/<uuid:utilisateur_id>/statut/', StatutEmployeAPIView.as_view(), name='api_equipe_statut'),
+    path('conversations/', ConversationListAPIView.as_view(), name='api_conversations_list'),
+    path('conversations/<uuid:conversation_id>/messages/', ConversationMessagesAPIView.as_view(), name='api_conversation_messages'),
     path('devis/', DevisListCreateAPIView.as_view(), name='api_devis_list_create'),
     path('devis/<int:pk>/', DevisDetailAPIView.as_view(), name='api_devis_detail'),
     path('devis/<int:pk>/pdf/', DevisPDFAPIView.as_view(), name='api_devis_pdf'),
