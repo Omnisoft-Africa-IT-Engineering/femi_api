@@ -28,6 +28,7 @@ django-timezone-field==7.2.2
 djangorestframework==3.18.0
 djangorestframework_simplejwt==5.5.1
 drf-spectacular==0.30.0
+firebase-admin==7.7.0
 et_xmlfile==2.0.0
 filelock==4.0.1
 frozenlist==1.8.0

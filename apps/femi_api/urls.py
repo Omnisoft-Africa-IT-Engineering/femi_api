@@ -22,6 +22,14 @@ from apps.femi_api.views import (
     ConfigAPIView,
 )
 
+from apps.femi_api.views_utilisateurs import (
+    CreerUtilisateurEntrepriseAPIView,
+    ActiverCompteAPIView,
+    RegenererCodeActivationAPIView,
+    EquipeAPIView,
+    FicheEmployeAPIView,
+    StatutEmployeAPIView,
+)
 urlpatterns = [
     path('transactions/process/', ProcessTransactionAPIView.as_view(), name='api_process_transaction'),
     path('transactions/batch/', BatchTransactionAPIView.as_view(), name='api_transaction_batch'),
@@ -43,4 +51,10 @@ urlpatterns = [
     path('auth/link-whatsapp/request/', LinkWhatsAppRequestAPIView.as_view(), name='api_link_whatsapp_request'),
     path('auth/link-whatsapp/confirm/', LinkWhatsAppConfirmAPIView.as_view(), name='api_link_whatsapp_confirm'),
     path('transcrire-audio/', TranscrireAudioAPIView.as_view(), name='api_transcrire_audio'),
-]
+    path('auth/users/', CreerUtilisateurEntrepriseAPIView.as_view(), name='api_auth_create_user'),
+    path('auth/activate/', ActiverCompteAPIView.as_view(), name='api_auth_activate'),
+    path('auth/users/<uuid:utilisateur_id>/regenerate-code/', RegenererCodeActivationAPIView.as_view(), name='api_auth_regenerate_code'),
+    path('equipe/', EquipeAPIView.as_view(), name='api_equipe'),
+    path('equipe/<uuid:utilisateur_id>/', FicheEmployeAPIView.as_view(), name='api_equipe_fiche'),
+    path('equipe/<uuid:utilisateur_id>/statut/', StatutEmployeAPIView.as_view(), name='api_equipe_statut'),
+    ]

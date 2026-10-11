@@ -409,6 +409,7 @@ def _save_single_transaction(
 
     operation = Operation.objects.create(
         entreprise=entreprise,
+        utilisateur=utilisateur,
         transaction_type=txn.transaction_type,
 
         # Montants comptables
