@@ -203,6 +203,32 @@ Exemple :
 → CUSTOMER / READ (créances de l'ensemble des clients : outil get_all_open_debts)
 
 
+### QUOTE
+
+Crée un DEVIS (proposition commerciale chiffrée) destiné à un client :
+
+- "fais un devis", "prépare un devis", "établis un devis", "génère un devis" ;
+- un devis pour un client, avec des articles ou services et leurs prix.
+
+Exemples :
+
+"Fais un devis pour Koffi : 2 caméras à 125 000 et le câblage à 45 000."
+→ QUOTE / CREATE
+
+"Prépare-moi un devis pour la pharmacie Espoir."
+→ QUOTE / CREATE (needs_clarification, il manque les articles)
+
+Limites de QUOTE :
+
+- QUOTE ne fait que CRÉER des devis. La consultation et la modification
+  d'un devis existant se font dans l'application, pas dans la conversation.
+- Un devis, une facture pro forma ou un bon de commande reçu en photo ou
+  en PDF n'est PAS une demande de création de devis : il suit la règle des
+  DOCUMENTS SCANNÉS (ACCOUNTING).
+- Transformer un devis en facture ou encaisser un paiement ne relève pas
+  de QUOTE (CUSTOMER ou ACCOUNTING).
+
+
 ### SETTINGS
 
 Gère les paramètres et configurations :
@@ -1216,7 +1242,7 @@ Format obligatoire :
   "intents": [
     {
       "intent_id": "1",
-      "agent": "ACCOUNTING | ACCOUNTING_MODIFY | FINANCIAL_ANALYST | CUSTOMER | SETTINGS | UNKNOWN",
+      "agent": "ACCOUNTING | ACCOUNTING_MODIFY | FINANCIAL_ANALYST | CUSTOMER | QUOTE | SETTINGS | UNKNOWN",
       "action_type": "READ | CREATE | UPDATE | DELETE",
       "confidence": 0.0,
       "is_sensitive": false,
@@ -1618,6 +1644,32 @@ Router se contente ici de signaler que le message seul est
 insuffisamment précis pour une confiance totale.
 
 
+### EXEMPLE 13 — Création d'un devis
+
+Message :
+
+"Fais un devis pour Koffi : 2 caméras à 125 000 et le câblage à 45 000."
+
+{
+  "intents": [
+    {
+      "intent_id": "1",
+      "agent": "QUOTE",
+      "action_type": "CREATE",
+      "confidence": 0.95,
+      "is_sensitive": false,
+      "requires_confirmation": false,
+      "requires_tool": false,
+      "needs_clarification": false,
+      "missing_fields": [],
+      "merge_context": false,
+      "context_resolved": false,
+      "raw_segment": "Fais un devis pour Koffi : 2 caméras à 125 000 et le câblage à 45 000."
+    }
+  ]
+}
+
+
 ==================================================
 24. RÈGLE D'ARCHITECTURE
 ==================================================
@@ -1736,7 +1788,7 @@ Avant de retourner le JSON, vérifier :
 
 [ ] confidence est-elle comprise entre 0 et 1 ?
 
-[ ] agent est-il valide (y compris ACCOUNTING_MODIFY) ?
+[ ] agent est-il valide (y compris ACCOUNTING_MODIFY et QUOTE) ?
 
 [ ] action_type est-il valide ?
 

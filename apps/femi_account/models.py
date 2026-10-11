@@ -1,5 +1,7 @@
 import uuid
+from decimal import Decimal
 from django.db import models
+from django.db.models import Sum
 from django.contrib.auth.models import AbstractUser
 import random
 from datetime import timedelta
@@ -922,3 +924,112 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"{self.utilisateur} — {self.titre}"
+
+
+# ============================================================
+# DEVIS
+# ============================================================
+
+def generer_reference_devis():
+    """Référence unique et non séquentielle, ex. DEV-A1B2C3D4."""
+    return f"DEV-{uuid.uuid4().hex[:8].upper()}"
+
+
+class Devis(models.Model):
+    """En-tête d'un devis. Le total est toujours calculé par le backend."""
+
+    STATUT_CHOICES = [
+        ("BROUILLON", "Brouillon"),
+        ("VALIDE", "Validé"),
+        ("FACTURE", "Transformé en facture"),
+        ("ANNULE", "Annulé"),
+    ]
+
+    reference = models.CharField(
+        max_length=50,
+        unique=True,
+        editable=False,
+        default=generer_reference_devis,
+    )
+    entreprise = models.ForeignKey(
+        "Entreprise",
+        on_delete=models.CASCADE,
+        related_name="devis",
+    )
+    client = models.ForeignKey(
+        "Contact",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="devis",
+    )
+    date_emission = models.DateField(default=timezone.localdate)
+    date_validite = models.DateField(null=True, blank=True)
+    montant_total = models.DecimalField(
+        max_digits=14, decimal_places=2, default=Decimal("0.00")
+    )
+    statut = models.CharField(
+        max_length=20, choices=STATUT_CHOICES, default="BROUILLON"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Devis"
+        verbose_name_plural = "Devis"
+        indexes = [
+            models.Index(
+                fields=["entreprise", "-created_at"],
+                name="devis_entreprise_created_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Devis {self.reference} — {self.entreprise.nom}"
+
+    def calculer_total(self):
+        """Recalcule montant_total depuis les lignes (une seule requête SQL)."""
+        total = self.lignes.aggregate(t=Sum("montant_total"))["t"] or Decimal("0.00")
+        self.montant_total = total
+        self.save(update_fields=["montant_total", "updated_at"])
+        return total
+
+
+class LigneDevis(models.Model):
+    """Une ligne (article ou service) d'un devis."""
+
+    devis = models.ForeignKey(
+        Devis, on_delete=models.CASCADE, related_name="lignes"
+    )
+    description = models.TextField()
+    quantite = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal("1.00")
+    )
+    prix_unitaire = models.DecimalField(
+        max_digits=14, decimal_places=2, default=Decimal("0.00")
+    )
+    montant_total = models.DecimalField(
+        max_digits=14, decimal_places=2, default=Decimal("0.00")
+    )
+
+    class Meta:
+        ordering = ["id"]
+        verbose_name = "Ligne de devis"
+        verbose_name_plural = "Lignes de devis"
+
+    def __str__(self):
+        return f"{self.description} ({self.quantite} x {self.prix_unitaire})"
+
+    def save(self, *args, **kwargs):
+        self.montant_total = (self.quantite * self.prix_unitaire).quantize(
+            Decimal("0.01")
+        )
+        super().save(*args, **kwargs)
+        self.devis.calculer_total()
+
+    def delete(self, *args, **kwargs):
+        devis = self.devis
+        result = super().delete(*args, **kwargs)
+        devis.calculer_total()
+        return result

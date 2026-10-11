@@ -14,6 +14,7 @@ from apps.femi_agent.schemas.customer import CustomerExtractionOutput
 from apps.femi_agent.schemas.tool_loop import ValidationOutput
 
 from apps.femi_agent.schemas.accounting import AccountingExtractionResult
+from apps.femi_agent.schemas.quote import QuoteExtractionResult
 
 # Valeurs autorisées, copiées telles quelles depuis router_prompt.py (sections 2 et 3)
 RouterAgent = Literal[
@@ -21,6 +22,7 @@ RouterAgent = Literal[
     "ACCOUNTING_MODIFY",
     "FINANCIAL_ANALYST",
     "CUSTOMER",
+    "QUOTE",
     "SETTINGS",
     "UNKNOWN",
 ]
@@ -108,5 +110,13 @@ class RouterProcessResult(BaseModel):
             "router_output.intents. ValidationOutput si cas bloquant (wrong_agent, "
             "contact_disambiguation), CustomerExtractionOutput pour le sous-flux CREATE, "
             "ToolSelectionOutput si needs_clarification=True côté READ, sinon FinalAnswerOutput."
+        ),
+    )
+
+    quote_results: list[QuoteExtractionResult] = Field(
+        default_factory=list,
+        description=(
+            "Résultats QUOTE (création de devis), un par intent traité, dans le "
+            "même ordre que router_output.intents."
         ),
     )

@@ -77,6 +77,13 @@ from .stt import (
     UncertainSegmentSchema,
     SttPostProcessingResult,
 )
+
+from .quote import (
+    LigneDevisLLMSchema,
+    LigneDevisSchema,
+    QuoteExtractionLLMResult,
+    QuoteExtractionResult,
+)
 __all__ = [
     # ollama_gbnf_extraction.py (ancien pipeline)
     "PaymentMethodEnum",
@@ -131,4 +138,9 @@ __all__ = [
     "SttConfidence",
     "UncertainSegmentSchema",
     "SttPostProcessingResult",
+    # quote.py (sortie structurée de QUOTE_PROMPT)
+    "LigneDevisLLMSchema",
+    "LigneDevisSchema",
+    "QuoteExtractionLLMResult",
+    "QuoteExtractionResult",
 ]
