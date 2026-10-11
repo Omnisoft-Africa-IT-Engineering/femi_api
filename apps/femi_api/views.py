@@ -72,9 +72,15 @@ class ProcessTransactionAPIView(APIView):
         data = serializer.validated_data
         
         # Récupération sécurisée du contexte de l'entreprise et de l'utilisateur connectés
-        entreprise_id = getattr(request.user, "entreprise_id", None) or request.data.get("entreprise_id")
-        utilisateur_id = str(request.user.id) if request.user and request.user.is_authenticated else request.data.get("utilisateur_id")
-
+                # Contexte déduit du token UNIQUEMENT : jamais du corps de la requête.
+        entreprise_id = request.user.entreprise_id
+        if not entreprise_id:
+            return Response(
+                {"success": False, "message": "Aucune entreprise configurée pour ce compte."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        utilisateur_id = str(request.user.id)
+        
         image_file = data.get("image")
         image_bytes = image_file.read() if image_file else None
         
