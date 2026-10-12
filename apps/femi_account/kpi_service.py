@@ -1,9 +1,11 @@
 """
 Source unique de calcul des KPI de Femi.
 
-Trois écrans les affichent (`/kpi/`, `/kpi/<niveau>/`, `dashboard/kpis/`) :
-tous appellent ce module, donc le même nom de KPI donne le même chiffre
-partout.
+Tous les écrans qui affichent un chiffre financier appellent ce module
+(`/kpi/`, `/kpi/<niveau>/`, `dashboard/kpis/`, `etat-financier/`,
+`bilan/synthese/` et les outils financiers du chat) : le même nom de KPI
+donne donc le même chiffre partout. Ne recalculez jamais un montant ailleurs ;
+ajoutez un calculateur ici.
 
 Deux familles, selon les règles comptables (SYSCOHADA) :
 
@@ -91,8 +93,14 @@ def periode_precedente(debut, fin):
 
 
 def variation(actuel, precedent):
-    """Variation en % (None si la période précédente vaut 0)."""
-    if not precedent:
+    """Variation en % par rapport à la période précédente.
+
+    None quand la comparaison n'a pas de sens : valeur absente, ou période
+    précédente à 0 (aucune base). Le dénominateur est pris en valeur absolue,
+    pour qu'un bénéfice qui passe de -100 à +50 s'affiche comme une
+    amélioration et non comme une baisse.
+    """
+    if actuel is None or not precedent:
         return None
     return round((actuel - precedent) / abs(precedent) * 100, 1)
 
@@ -194,9 +202,12 @@ def calc_benefice(ctx):
 
 
 def calc_marge(ctx):
+    """Marge en % du chiffre d'affaires ; None s'il n'y a pas de chiffre
+    d'affaires (une marge de 0 % laisserait croire à une activité à l'équilibre).
+    Négative quand les dépenses dépassent le chiffre d'affaires."""
     ca = calc_chiffre_affaires(ctx)
     if ca <= 0:
-        return 0.0
+        return None
     return round((ca - calc_depenses(ctx)) / ca * 100, 2)
 
 
@@ -228,15 +239,38 @@ def calc_tresorerie(ctx):
     )
 
 
+def calc_variation_tresorerie(ctx):
+    """Mouvement net de trésorerie PENDANT la période [debut, fin].
+
+    = trésorerie à `fin` - trésorerie à la veille de `debut`. Sans `debut`,
+    c'est la trésorerie cumulée. Même formule que calc_tresorerie, donc
+    cohérent avec elle par construction.
+    """
+    a_la_fin = calc_tresorerie(KpiContexte(ctx.entreprise, None, ctx.fin))
+    if not ctx.debut:
+        return a_la_fin
+    veille = ctx.debut - timedelta(days=1)
+    return round(a_la_fin - calc_tresorerie(KpiContexte(ctx.entreprise, None, veille)), 2)
+
+
 def calc_creances(ctx):
     """Ventes à crédit non encaissées (solde cumulé)."""
     return round(_f(ctx.soldes["creances"]), 2)
 
 
+def calc_dettes_fournisseurs(ctx):
+    """Achats à crédit non payés (solde cumulé) : passif circulant."""
+    return round(_f(ctx.soldes["dettes_fournisseurs"]), 2)
+
+
+def calc_emprunts(ctx):
+    """Emprunts non remboursés (solde cumulé) : dettes financières."""
+    return round(_f(ctx.soldes["emprunts"]), 2)
+
+
 def calc_dettes(ctx):
     """Achats à crédit non payés + emprunts non remboursés (solde cumulé)."""
-    s = ctx.soldes
-    return round(_f(s["dettes_fournisseurs"]) + _f(s["emprunts"]), 2)
+    return round(calc_dettes_fournisseurs(ctx) + calc_emprunts(ctx), 2)
 
 
 def calc_prets_accordes(ctx):
