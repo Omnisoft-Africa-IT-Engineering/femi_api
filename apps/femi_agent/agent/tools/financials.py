@@ -49,11 +49,10 @@ net PENDANT la période), pour distinguer "trésorerie actuelle" (balance)
 de "comment ma trésorerie a évolué" (cashflow), comme l'exige le prompt
 section BALANCE / CASHFLOW.
 
-Asymétrie encaisse/décaisse volontairement conservée à l'identique de
-_calc_tresorerie : "encaisse" utilise montant_paye (RECETTE réellement
-encaissée), "decaisse" utilise amount_ttc (DEPENSE comptabilisée, pas
-nécessairement payée). Pas corrigée ici — à trancher séparément si c'est
-un bug côté views.py.
+Tous les montants viennent désormais de apps.femi_account.kpi_service, la
+source unique des KPI : le chat donne les mêmes chiffres que le tableau de
+bord. L'ancienne asymétrie (encaisse = montant_paye, décaisse = amount_ttc)
+est supprimée : une dépense à crédit non payée ne sort pas de la trésorerie.
 """
 
 import calendar
@@ -63,6 +62,16 @@ from decimal import Decimal
 from django.db.models import Q, Sum
 from django.utils import timezone
 
+from apps.femi_account.kpi_service import (
+    KpiContexte,
+    calc_benefice,
+    calc_chiffre_affaires,
+    calc_depenses,
+    calc_marge,
+    calc_tresorerie,
+    calc_variation_tresorerie,
+    variation,
+)
 from apps.femi_account.models import Operation
 
 from apps.femi_agent.agent.tools.periodes import PERIODES_VALIDES, resolve_periode  # noqa: F401 (PERIODES_VALIDES ré-exporté pour compat)
@@ -81,6 +90,16 @@ def _sum(qs, field="amount_ttc"):
     return qs.aggregate(t=Sum(field))["t"] or Decimal("0.00")
 
 
+def _devise(entreprise):
+    return getattr(entreprise, "devise", None) or "XOF"
+
+
+def _contexte(entreprise, periode, date_debut=None, date_fin=None):
+    """Contexte de calcul kpi_service pour la période demandée au chat."""
+    start, end = resolve_periode(periode, date_debut, date_fin)
+    return KpiContexte(entreprise, start, end)
+
+
 # --------------------------------------------------------------------------
 # Tools exposés au LLM
 # --------------------------------------------------------------------------
@@ -93,9 +112,12 @@ def get_revenue(entreprise, periode, date_debut=None, date_fin=None):
     Returns:
         {"periode": periode, "revenue": float, "currency": "XOF"}
     """
-    ops = _ops_periode(entreprise, periode, date_debut, date_fin)
-    revenue = float(_sum(ops.filter(transaction_type="RECETTE")))
-    return {"periode": periode, "revenue": revenue, "currency": "XOF"}
+    ctx = _contexte(entreprise, periode, date_debut, date_fin)
+    return {
+        "periode": periode,
+        "revenue": calc_chiffre_affaires(ctx),
+        "currency": _devise(entreprise),
+    }
 
 
 def get_expenses(entreprise, periode, date_debut=None, date_fin=None, detail_par_categorie=False):
@@ -111,12 +133,13 @@ def get_expenses(entreprise, periode, date_debut=None, date_fin=None, detail_par
             "par_categorie": [{"categorie": str, "montant": float}, ...] | None
         }
     """
-    ops = _ops_periode(entreprise, periode, date_debut, date_fin)
-    depenses_qs = ops.filter(transaction_type="DEPENSE")
-    expenses = float(_sum(depenses_qs))
+    ctx = _contexte(entreprise, periode, date_debut, date_fin)
+    expenses = calc_depenses(ctx)
 
     par_categorie = None
     if detail_par_categorie:
+        ops = _ops_periode(entreprise, periode, date_debut, date_fin)
+        depenses_qs = ops.filter(transaction_type="DEPENSE")
         avec_categorie = depenses_qs.exclude(category__isnull=True).exclude(category__exact="")
         lignes = avec_categorie.values("category").annotate(total=Sum("amount_ttc")).order_by("-total")
         par_categorie = [{"categorie": l["category"], "montant": float(l["total"])} for l in lignes]
@@ -127,7 +150,12 @@ def get_expenses(entreprise, periode, date_debut=None, date_fin=None, detail_par
             par_categorie.append({"categorie": "Sans catégorie", "montant": sans_categorie})
         par_categorie = par_categorie or None
 
-    return {"periode": periode, "expenses": expenses, "currency": "XOF", "par_categorie": par_categorie}
+    return {
+        "periode": periode,
+        "expenses": expenses,
+        "currency": _devise(entreprise),
+        "par_categorie": par_categorie,
+    }
 
 
 def calculate_profit(entreprise, periode, date_debut=None, date_fin=None):
@@ -137,89 +165,75 @@ def calculate_profit(entreprise, periode, date_debut=None, date_fin=None):
     Returns:
         {"periode": periode, "profit": float, "currency": "XOF"}
     """
-    revenue = get_revenue(entreprise, periode, date_debut, date_fin)["revenue"]
-    expenses = get_expenses(entreprise, periode, date_debut, date_fin)["expenses"]
-    return {"periode": periode, "profit": revenue - expenses, "currency": "XOF"}
+    ctx = _contexte(entreprise, periode, date_debut, date_fin)
+    return {
+        "periode": periode,
+        "profit": calc_benefice(ctx),
+        "currency": _devise(entreprise),
+    }
 
 
 def calculate_margin(entreprise, periode, date_debut=None, date_fin=None):
     """
     Marge (%) = (revenue - expenses) / revenue * 100 sur la période.
-    Reprend _calc_marge. Retourne 0.0 si revenue <= 0 (évite division par zéro,
-    même convention que l'existant).
+    Même calcul que le tableau de bord (kpi_service.calc_marge). Retourne
+    margin_percent = None (avec une note) s'il n'y a aucun chiffre d'affaires :
+    une marge de 0 % laisserait croire à une activité à l'équilibre.
 
     Returns:
-        {"periode": periode, "margin_percent": float}
+        {"periode": periode, "margin_percent": float | None}
     """
-    revenue = get_revenue(entreprise, periode, date_debut, date_fin)["revenue"]
-    if revenue <= 0:
-        return {"periode": periode, "margin_percent": 0.0}
-    expenses = get_expenses(entreprise, periode, date_debut, date_fin)["expenses"]
-    margin = round(((revenue - expenses) / revenue) * 100, 2)
-    return {"periode": periode, "margin_percent": margin}
+    ctx = _contexte(entreprise, periode, date_debut, date_fin)
+    marge = calc_marge(ctx)
+    if marge is None:
+        return {
+            "periode": periode,
+            "margin_percent": None,
+            "note": "Aucun chiffre d'affaires sur cette période : la marge n'est pas calculable.",
+        }
+    return {"periode": periode, "margin_percent": marge}
 
 
 def get_cashflow(entreprise, periode, date_debut=None, date_fin=None):
     """
     Mouvement net de trésorerie PENDANT la période (entrées - sorties,
-    ajusté des prêts). Même formule que _calc_tresorerie, mais restreinte
-    à la période au lieu de tout l'historique — voir note en tête de fichier.
+    prêts compris). C'est la différence entre la trésorerie à la fin de la
+    période et à sa veille : même formule que calculate_balance.
+
+    encaisse / decaisse = argent réellement reçu / payé sur les opérations
+    de la période (montant_paye) ; net inclut en plus les prêts.
 
     Returns:
         {
             "periode": periode,
             "encaisse": float, "decaisse": float,
-            "net": float, "currency": "XOF"
+            "net": float, "currency": str
         }
     """
     ops = _ops_periode(entreprise, periode, date_debut, date_fin)
-
     encaisse = _sum(ops.filter(transaction_type="RECETTE"), field="montant_paye")
-    decaisse = _sum(ops.filter(transaction_type="DEPENSE"), field="amount_ttc")
-
-    prets_donnes = ops.filter(transaction_type="PRET_DONNE")
-    sorti_prets = _sum(prets_donnes, field="amount_ttc")
-    rembourse_recu = _sum(prets_donnes, field="montant_paye")
-
-    prets_recus = ops.filter(transaction_type="PRET_RECU")
-    entre_prets = _sum(prets_recus, field="amount_ttc")
-    rembourse_verse = _sum(prets_recus, field="montant_paye")
-
-    net = encaisse - decaisse - sorti_prets + rembourse_recu + entre_prets - rembourse_verse
+    decaisse = _sum(ops.filter(transaction_type="DEPENSE"), field="montant_paye")
+    ctx = _contexte(entreprise, periode, date_debut, date_fin)
 
     return {
         "periode": periode,
         "encaisse": float(encaisse),
         "decaisse": float(decaisse),
-        "net": float(net),
-        "currency": "XOF",
+        "net": calc_variation_tresorerie(ctx),
+        "currency": _devise(entreprise),
     }
 
 
 def calculate_balance(entreprise, periode=None, **kwargs):
     """
     Solde de trésorerie CUMULÉ (tout l'historique, sans période).
-    Reprise directe de _calc_tresorerie appliquée à toutes les opérations.
+    Même calcul que le tableau de bord (kpi_service.calc_tresorerie).
 
     Returns:
-        {"balance": float, "currency": "XOF"}
+        {"balance": float, "currency": str}
     """
-    ops = Operation.objects.filter(entreprise=entreprise)
-
-    encaisse = _sum(ops.filter(transaction_type="RECETTE"), field="montant_paye")
-    decaisse = _sum(ops.filter(transaction_type="DEPENSE"), field="amount_ttc")
-
-    prets_donnes = ops.filter(transaction_type="PRET_DONNE")
-    sorti_prets = _sum(prets_donnes, field="amount_ttc")
-    rembourse_recu = _sum(prets_donnes, field="montant_paye")
-
-    prets_recus = ops.filter(transaction_type="PRET_RECU")
-    entre_prets = _sum(prets_recus, field="amount_ttc")
-    rembourse_verse = _sum(prets_recus, field="montant_paye")
-
-    balance = encaisse - decaisse - sorti_prets + rembourse_recu + entre_prets - rembourse_verse
-
-    return {"balance": float(balance), "currency": "XOF"}
+    ctx = KpiContexte(entreprise, None, None)
+    return {"balance": calc_tresorerie(ctx), "currency": _devise(entreprise)}
 
 
 _INDICATEUR_TOOLS = {
@@ -244,8 +258,8 @@ def compare_periods(entreprise, indicateur, periode_1, periode_2,
             "indicateur": indicateur,
             "periode_1": {"periode": ..., "value": float},
             "periode_2": {"periode": ..., "value": float},
-            "variation_absolue": float,
-            "variation_percent": float | None,   # None si periode_2 == 0
+            "variation_absolue": float | None,
+            "variation_percent": float | None,   # None si periode_2 == 0 ou valeur absente
         }
 
     Raises:
@@ -273,8 +287,13 @@ def compare_periods(entreprise, indicateur, periode_1, periode_2,
     valeur_1 = result_1[cle_valeur]
     valeur_2 = result_2[cle_valeur]
 
-    variation_absolue = valeur_1 - valeur_2
-    variation_percent = round((variation_absolue / valeur_2) * 100, 2) if valeur_2 != 0 else None
+    if valeur_1 is None or valeur_2 is None:
+        # Ex. marge sans chiffre d'affaires sur l'une des périodes.
+        variation_absolue = None
+        variation_percent = None
+    else:
+        variation_absolue = valeur_1 - valeur_2
+        variation_percent = variation(valeur_1, valeur_2)
 
     return {
         "indicateur": indicateur,

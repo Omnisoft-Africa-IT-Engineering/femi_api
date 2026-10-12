@@ -30,9 +30,11 @@ from apps.femi_account.models import Contact, Entreprise, Kpi, Niveau, Operation
 from apps.femi_account.services import generer_echeances_otr
 from apps.femi_account.kpi_service import (
     KPI_CALCULATEURS, KpiContexte, calc_benefice, calc_chiffre_affaires,
-    calc_clients, calc_creances, calc_dettes, calc_depenses, calc_marge,
-    calc_nombre_transactions, calc_panier_moyen, calc_tresorerie,
-    calculer_kpi, resoudre_periode, resoudre_periode_precedente,
+    calc_clients, calc_creances, calc_dettes, calc_dettes_fournisseurs,
+    calc_depenses, calc_emprunts, calc_marge, calc_nombre_prestations,
+    calc_nombre_transactions, calc_panier_moyen, calc_prets_accordes,
+    calc_tresorerie, calculer_kpi, resoudre_periode,
+    resoudre_periode_precedente, variation,
 )
 from apps.femi_api.serializers import (
     BatchTransactionPayloadSerializer,
@@ -122,9 +124,9 @@ class DashboardKPIAPIView(APIView):
 
     @staticmethod
     def _pct_change(current, previous):
-        if not previous:
-            return 100.0 if current > 0 else 0.0
-        return round(float((current - previous) / previous * 100), 2)
+        """Variation en % ; None quand la comparaison n'a pas de sens
+        (période précédente à 0 : aucune base). Voir kpi_service.variation."""
+        return variation(current, previous)
 
     def get(self, request, *args, **kwargs):
         period = request.query_params.get('period', 'this_month')
@@ -141,6 +143,13 @@ class DashboardKPIAPIView(APIView):
         # Flux sur la période, soldes (trésorerie, créances, dettes) cumulés
         debut, fin = resoudre_periode(period)
         ctx = KpiContexte(entreprise, debut, fin)
+
+        # Date à laquelle les soldes sont arrêtés : maintenant pour une période
+        # en cours, la fin de période pour une période passée.
+        if fin is None or fin >= timezone.localdate():
+            solde_arrete_le = now.isoformat()
+        else:
+            solde_arrete_le = fin.isoformat()
 
         revenue = calc_chiffre_affaires(ctx)
         expenses = calc_depenses(ctx)
@@ -172,20 +181,22 @@ class DashboardKPIAPIView(APIView):
                     "total_revenue": float(revenue),
                     "total_expenses": float(expenses),
                     "net_profit": float(profit),
-                    "profit_margin_percentage": round(float(margin), 2),
+                    "profit_margin_percentage": None if margin is None else round(float(margin), 2),
                     "average_sale_amount": round(float(avg_sale), 2),
                     "total_transactions_count": transactions_count,
                     "unique_clients_count": unique_clients_count,
                     "total_receivables": float(total_receivables),
                     "total_debts": float(total_debts),
-                    "pending_orders_count": 0,
-                    "total_products_count": 0,
-                    "recurring_clients_count": 0,
-                    "services_count": 0,
+                    # Non suivis pour le moment : null (et non 0, qui passerait
+                    # pour une vraie valeur).
+                    "pending_orders_count": None,
+                    "total_products_count": None,
+                    "recurring_clients_count": None,
+                    "services_count": int(calc_nombre_prestations(ctx)),
                 },
                 "treasury": {
                     "balance": float(treasury_balance),
-                    "as_of": now.isoformat()
+                    "as_of": solde_arrete_le
                 },
                 "trends": {
                     "revenue_change_percentage": self._pct_change(revenue, prev_revenue),
@@ -193,20 +204,20 @@ class DashboardKPIAPIView(APIView):
                     "profit_change_percentage": self._pct_change(profit, prev_profit),
                 },
                 "operations": {
-                    "stock_status_percentage": 0.0,
+                    "stock_status_percentage": None,
                     "suppliers_count": Contact.objects.filter(entreprise=entreprise, type="FOURNISSEUR").count(),
-                    "production_rate_percentage": 0.0,
+                    "production_rate_percentage": None,
                     "total_purchases": float(expenses),
-                    "deliveries_count": 0,
-                    "staff_count": 0,
+                    "deliveries_count": None,
+                    "staff_count": None,
                 },
                 "ai_insights": {
-                    "anomalies_count": 0,
-                    "trend_percentage": 0.0,
-                    "growth_forecast": 0.0,
-                    "alerts_count": 0,
-                    "recommendations_count": 0,
-                    "opportunities_count": 0,
+                    "anomalies_count": None,
+                    "trend_percentage": None,
+                    "growth_forecast": None,
+                    "alerts_count": None,
+                    "recommendations_count": None,
+                    "opportunities_count": None,
                 }
             },
             status=status.HTTP_200_OK
@@ -219,15 +230,18 @@ class EtatFinancierAPIView(APIView):
     Renvoie un bilan simplifié, calculé uniquement à partir des données
     réellement disponibles dans le modèle Operation.
 
-    IMPORTANT — postes non calculables avec le modèle actuel :
-    - Actif Immobilisé : aucune notion d'immobilisations n'existe encore
-      (pas de modèle Immobilisation/Amortissement)
-    - Passif Circulant : aucune notion de dettes fournisseurs / charges à
-      payer n'existe encore
+    Tous les montants viennent de apps.femi_account.kpi_service (même
+    définition que le tableau de bord).
 
-    Ces deux postes sont renvoyés à 0, et le champ "equilibre" indique si
-    Actif = Passif (ce qui ne sera pas le cas tant que ces postes manquent
-    — c'est normal et attendu, pas un bug).
+    Poste non calculable avec le modèle actuel :
+    - Actif immobilisé : aucune notion d'immobilisations n'existe encore
+      (pas de modèle Immobilisation/Amortissement). Renvoyé à 0.
+
+    Équilibre : Actif = trésorerie + créances + prêts accordés ;
+    Passif = résultat cumulé + dettes fournisseurs + emprunts. Ces deux
+    totaux sont égaux par construction tant que l'actif immobilisé est
+    absent et qu'une seule devise est utilisée : "equilibre" à false
+    signale donc un problème de données (ex. devises mélangées).
 
     Paramètre optionnel :
     - annee (int) : exercice comptable choisi. Un bilan est une "photo" à
@@ -285,50 +299,27 @@ class EtatFinancierAPIView(APIView):
             # Exercice révolu : photo au 31 décembre de cet exercice.
             date_limite = datetime(annee, 12, 31).date()
 
-        # Un bilan est une "photo" cumulative jusqu'à date_limite,
-        # jamais un cumul limité à une seule année isolée.
-        all_ops = Operation.objects.filter(
-            entreprise=entreprise,
-            transaction_date__lte=date_limite,
-        )
-
-        total_recettes = all_ops.filter(
-            Q(transaction_type__iexact="RECETTE") | Q(transaction_type__iexact="INCOME")
-        ).aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
-
-        total_depenses = all_ops.filter(
-            Q(transaction_type__iexact="DEPENSE") | Q(transaction_type__iexact="EXPENSE")
-        ).aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
+        # Photo cumulative jusqu'à date_limite (jamais limitée à une seule année).
+        ctx = KpiContexte(entreprise, None, date_limite)
 
         # --- ACTIF ---
-        tresorerie_actif = total_recettes - total_depenses
-
-        creances_ops = all_ops.filter(Q(transaction_type__iexact="RECETTE"), statut_paiement="CREDIT")
-        du_creances = creances_ops.aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
-        paye_creances = creances_ops.aggregate(t=Sum('montant_paye'))['t'] or Decimal('0.00')
-        actif_circulant = du_creances - paye_creances
-
-        actif_immobilise = Decimal('0.00')  # non calculable actuellement
-
-        total_actif = actif_immobilise + actif_circulant + tresorerie_actif
+        tresorerie_actif = calc_tresorerie(ctx)
+        actif_circulant = calc_creances(ctx)        # ventes à crédit non encaissées
+        prets_accordes = calc_prets_accordes(ctx)   # prêts donnés non remboursés
+        actif_immobilise = 0.0                      # non calculable actuellement
+        total_actif = round(
+            actif_immobilise + actif_circulant + prets_accordes + tresorerie_actif, 2
+        )
 
         # --- PASSIF ---
-        # Approximation : le résultat net cumulé jusqu'à date_limite tient
-        # lieu de "capitaux propres" — ce n'est PAS un vrai calcul comptable
-        # de capitaux propres (qui inclurait apports, réserves, etc.), juste
-        # une approximation à partir des données disponibles.
-        capitaux_propres = total_recettes - total_depenses
+        # Résultat cumulé jusqu'à date_limite tenant lieu de capitaux propres :
+        # ce n'est PAS un vrai calcul de capitaux propres (apports, réserves…).
+        capitaux_propres = calc_benefice(ctx)
+        dettes_financieres = calc_emprunts(ctx)         # emprunts non remboursés
+        passif_circulant = calc_dettes_fournisseurs(ctx)  # achats à crédit non payés
+        total_passif = round(capitaux_propres + dettes_financieres + passif_circulant, 2)
 
-        dettes_ops = all_ops.filter(Q(transaction_type__iexact="PRET_RECU"), statut_paiement="CREDIT")
-        du_dettes = dettes_ops.aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
-        paye_dettes = dettes_ops.aggregate(t=Sum('montant_paye'))['t'] or Decimal('0.00')
-        dettes_financieres = du_dettes - paye_dettes
-
-        passif_circulant = Decimal('0.00')  # non calculable actuellement
-
-        total_passif = capitaux_propres + dettes_financieres + passif_circulant
-
-        equilibre = abs(total_actif - total_passif) < Decimal('0.01')
+        equilibre = abs(total_actif - total_passif) < 0.01
 
         return Response(
             {
@@ -337,30 +328,30 @@ class EtatFinancierAPIView(APIView):
                 "devise": entreprise.devise or "XOF",
                 "equilibre": equilibre,
                 "actif": {
-                    "actif_immobilise": float(actif_immobilise),
-                    "actif_circulant": float(actif_circulant),
-                    "tresorerie_actif": float(tresorerie_actif),
-                    "total_actif": float(total_actif),
+                    "actif_immobilise": actif_immobilise,
+                    "actif_circulant": actif_circulant,
+                    "prets_accordes": prets_accordes,
+                    "tresorerie_actif": tresorerie_actif,
+                    "total_actif": total_actif,
                 },
                 "passif": {
-                    "capitaux_propres": float(capitaux_propres),
-                    "dettes_financieres": float(dettes_financieres),
-                    "passif_circulant": float(passif_circulant),
-                    "total_passif": float(total_passif),
+                    "capitaux_propres": capitaux_propres,
+                    "dettes_financieres": dettes_financieres,
+                    "passif_circulant": passif_circulant,
+                    "total_passif": total_passif,
                 },
                 "postes_non_calcules": [
                     "actif_immobilise",
-                    "passif_circulant",
                 ],
                 "avertissement": (
-                    "Bilan simplifié : les immobilisations et le passif "
-                    "circulant (dettes fournisseurs) ne sont pas encore "
-                    "suivis dans le système, donc ce bilan n'est pas "
-                    "garanti équilibré."
+                    "Bilan simplifié : les immobilisations ne sont pas encore "
+                    "suivies, et les capitaux propres sont approximés par le "
+                    "résultat cumulé."
                 ),
             },
             status=status.HTTP_200_OK
         )
+
 
 class RegistreJournalierAPIView(APIView):
     """
@@ -1452,9 +1443,10 @@ class BilanSyntheseAPIView(APIView):
     à partir du modèle Operation (CA, résultat net, marge, trésorerie),
     pour l'année demandée.
 
-    IMPORTANT — le modèle Operation n'a qu'un champ amount_ttc (pas de
-    amount_ht) : tous les montants ci-dessous sont donc TTC, jamais HT.
-    Le front doit refléter ça dans ses libellés.
+    Les montants sont TTC (amount_ttc), comme dans tout le tableau de bord ;
+    le front doit refléter ça dans ses libellés. Tous les calculs viennent de
+    apps.femi_account.kpi_service : mêmes chiffres que le tableau de bord.
+    La trésorerie est celle à la fin de l'année demandée (cumul).
 
     Postes volontairement exclus, jamais renvoyés comme calculés :
     - total_bilan : nécessite l'actif immobilisé, non suivi
@@ -1506,51 +1498,51 @@ class BilanSyntheseAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        ops_annee = Operation.objects.filter(entreprise=entreprise, transaction_date__year=annee)
-        recettes_qs = ops_annee.filter(Q(transaction_type__iexact="RECETTE") | Q(transaction_type__iexact="INCOME"))
-        depenses_qs = ops_annee.filter(Q(transaction_type__iexact="DEPENSE") | Q(transaction_type__iexact="EXPENSE"))
+        if not 1900 <= annee <= 2200:
+            return Response(
+                {"error": "Le paramètre 'annee' est hors limites."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        # Le modèle Operation n'a qu'un champ amount_ttc — pas de amount_ht.
-        ca_ttc = recettes_qs.aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
-        depenses_total = depenses_qs.aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
-        resultat_net = ca_ttc - depenses_total
-        marge_pct = (resultat_net / ca_ttc * 100) if ca_ttc > 0 else Decimal('0.00')
+        ctx = KpiContexte(
+            entreprise,
+            datetime(annee, 1, 1).date(),
+            datetime(annee, 12, 31).date(),
+        )
+        ctx_prec = KpiContexte(
+            entreprise,
+            datetime(annee - 1, 1, 1).date(),
+            datetime(annee - 1, 12, 31).date(),
+        )
 
-        # Trésorerie globale (toutes années confondues, cohérent avec DashboardKPIAPIView)
-        all_ops = Operation.objects.filter(entreprise=entreprise)
-        total_in = all_ops.filter(Q(transaction_type__iexact="RECETTE") | Q(transaction_type__iexact="INCOME")).aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
-        total_out = all_ops.filter(Q(transaction_type__iexact="DEPENSE") | Q(transaction_type__iexact="EXPENSE")).aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
-        tresorerie = total_in - total_out
+        ca_ttc = calc_chiffre_affaires(ctx)
+        resultat_net = calc_benefice(ctx)
+        marge_pct = calc_marge(ctx)        # None s'il n'y a pas de chiffre d'affaires
+        tresorerie = calc_tresorerie(ctx)  # cumul à la fin de l'année demandée
 
-        # Croissance du CA vs année précédente (null si pas de référence)
-        ops_annee_prec = Operation.objects.filter(entreprise=entreprise, transaction_date__year=annee - 1)
-        recettes_prec_qs = ops_annee_prec.filter(Q(transaction_type__iexact="RECETTE") | Q(transaction_type__iexact="INCOME"))
-        ca_ttc_prec = recettes_prec_qs.aggregate(t=Sum('amount_ttc'))['t'] or Decimal('0.00')
+        # Croissance du CA vs année précédente (None si pas de référence)
+        croissance_pct = variation(ca_ttc, calc_chiffre_affaires(ctx_prec))
 
-        if ca_ttc_prec and ca_ttc_prec != 0:
-            croissance_pct = round(float((ca_ttc - ca_ttc_prec) / ca_ttc_prec * 100), 2)
-        else:
-            croissance_pct = None
+        marge = {"valeur": marge_pct, "disponible": marge_pct is not None}
+        if marge_pct is None:
+            marge["raison"] = "Aucun chiffre d'affaires sur cette année."
 
         return Response(
             {
                 "annee": annee,
                 "devise": entreprise.devise or "XOF",
                 "chiffre_affaires": {
-                    "valeur": float(ca_ttc),
+                    "valeur": ca_ttc,
                     "disponible": True,
                     "croissance_pct": croissance_pct,
                 },
                 "resultat_net": {
-                    "valeur": float(resultat_net),
+                    "valeur": resultat_net,
                     "disponible": True,
                 },
-                "marge_pct": {
-                    "valeur": round(float(marge_pct), 2),
-                    "disponible": True,
-                },
+                "marge_pct": marge,
                 "tresorerie": {
-                    "valeur": float(tresorerie),
+                    "valeur": tresorerie,
                     "disponible": True,
                 },
                 "total_bilan": {
@@ -1570,6 +1562,7 @@ class BilanSyntheseAPIView(APIView):
             },
             status=status.HTTP_200_OK
         )
+
 
 class RegisterAPIView(APIView):
     """
