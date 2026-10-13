@@ -33,6 +33,10 @@ from django.db.models import Count, F, Q, Sum
 from django.utils import timezone
 
 from .models import Operation, PrestationRealisee
+from .soldes_ouverts import (
+    total_creances_ouvertes,
+    total_dettes_fournisseurs_ouvertes,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -254,13 +258,21 @@ def calc_variation_tresorerie(ctx):
 
 
 def calc_creances(ctx):
-    """Ventes à crédit non encaissées (solde cumulé)."""
-    return round(_f(ctx.soldes["creances"]), 2)
+    """Ventes à crédit non encaissées (solde cumulé).
+
+    Source unique : soldes_ouverts.total_creances_ouvertes
+    (identique au total affiché par le chat « qui me doit / mes créances »).
+    """
+    return total_creances_ouvertes(ctx.entreprise, jusqua=ctx.fin)
 
 
 def calc_dettes_fournisseurs(ctx):
-    """Achats à crédit non payés (solde cumulé) : passif circulant."""
-    return round(_f(ctx.soldes["dettes_fournisseurs"]), 2)
+    """Achats à crédit non payés (solde cumulé) : passif circulant.
+
+    Source unique : soldes_ouverts.total_dettes_fournisseurs_ouvertes
+    (identique au chat « à qui je dois / créanciers »).
+    """
+    return total_dettes_fournisseurs_ouvertes(ctx.entreprise, jusqua=ctx.fin)
 
 
 def calc_emprunts(ctx):
