@@ -2,7 +2,7 @@
 
 L'agent ne fait QUE de l'extraction : le client, les lignes (description,
 quantité, prix unitaire). Il ne calcule aucun total et n'enregistre rien :
-le backend calcule et crée le devis. Aucun placeholder dans ce texte.
+le backend calcule et crée le devis.
 """
 
 QUOTE_PROMPT = """Tu es l'agent QUOTE de Femi, assistant comptable de PME d'Afrique de l'Ouest.
