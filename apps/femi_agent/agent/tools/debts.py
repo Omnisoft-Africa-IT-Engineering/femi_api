@@ -262,3 +262,84 @@ def get_all_open_payables(entreprise):
         "total_general": total_general,
         "has_open_payable": total_general > 0,
     }
+
+def get_all_open_loans(entreprise):
+    """
+    Vue d'ensemble des prêts encore ouverts :
+    - prêts donnés (PRET_DONNE) : argent que l'entreprise a prêté, encore dû
+    - prêts reçus (PRET_RECU) : argent emprunté par l'entreprise, encore à rembourser
+
+    Returns:
+        {
+            "success": True,
+            "prets_donnes": {
+                "contacts": [{"contact", "contact_id", "operations", "total_restant"}, ...],
+                "sans_contact": {"operations", "total_restant"},
+                "total_restant": float,
+            },
+            "prets_recus": {
+                "contacts": [...],
+                "sans_contact": {...},
+                "total_restant": float,
+            },
+            "total_a_recevoir": float,  # somme prêts donnés restants
+            "total_a_rembourser": float,  # somme prêts reçus restants
+            "has_open_loan": bool,
+        }
+    """
+
+    def _group(transaction_type: str) -> dict:
+        qs = (
+            Operation.objects.filter(
+                entreprise=entreprise,
+                transaction_type=transaction_type,
+                amount_ttc__gt=F("montant_paye"),
+            )
+            .select_related("contact")
+            .order_by("contact__nom", "transaction_date")
+        )
+        par_contact = {}
+        sans_contact = {"operations": [], "total_restant": 0.0}
+        for op in qs:
+            serialized = _serialize_operation_ouverte(op)
+            if serialized["solde_restant"] <= 0:
+                continue
+            if op.contact_id is None:
+                cible = sans_contact
+            else:
+                cible = par_contact.setdefault(
+                    op.contact_id,
+                    {
+                        "contact": op.contact.nom,
+                        "contact_id": str(op.contact_id),
+                        "operations": [],
+                        "total_restant": 0.0,
+                    },
+                )
+            cible["operations"].append(serialized)
+            cible["total_restant"] += serialized["solde_restant"]
+        contacts = sorted(
+            par_contact.values(), key=lambda e: e["total_restant"], reverse=True
+        )
+        total = sum((c["total_restant"] for c in contacts), 0.0) + sans_contact[
+            "total_restant"
+        ]
+        return {
+            "contacts": contacts,
+            "sans_contact": sans_contact,
+            "total_restant": total,
+        }
+
+    prets_donnes = _group("PRET_DONNE")
+    prets_recus = _group("PRET_RECU")
+    total_a_recevoir = prets_donnes["total_restant"]
+    total_a_rembourser = prets_recus["total_restant"]
+
+    return {
+        "success": True,
+        "prets_donnes": prets_donnes,
+        "prets_recus": prets_recus,
+        "total_a_recevoir": total_a_recevoir,
+        "total_a_rembourser": total_a_rembourser,
+        "has_open_loan": (total_a_recevoir + total_a_rembourser) > 0,
+    }
