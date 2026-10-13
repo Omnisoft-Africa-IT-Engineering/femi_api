@@ -115,7 +115,7 @@ logger = logging.getLogger(__name__)
 # Délais maximaux du rédacteur pour les messages courts (salutations,
 # avis d'erreur) : au-delà, on envoie le texte de secours plutôt que de
 # faire attendre l'utilisateur.
-_SHORT_REPLY_TIMEOUT = 8.0
+_SHORT_REPLY_TIMEOUT =25
 
 
 DispatchResult = Optional[
