@@ -257,6 +257,10 @@ class ToolLoopExecutor:
         """
         tool_results = ToolLoopExecutor._run_tools(selection, tool_registry, log_prefix)
 
+        deterministic = ToolLoopExecutor._answer_from_resume_texte(tool_results)
+        if deterministic is not None:
+            return deterministic
+
         final_prompt = (
             prompt_text.replace("{tool_results}", json.dumps(tool_results, ensure_ascii=False))
             + _FINAL_STAGE_SUFFIX
@@ -283,6 +287,10 @@ class ToolLoopExecutor:
         """Version asynchrone de resolve()."""
         tool_results = ToolLoopExecutor._run_tools(selection, tool_registry, log_prefix)
 
+        deterministic = ToolLoopExecutor._answer_from_resume_texte(tool_results)
+        if deterministic is not None:
+            return deterministic
+
         final_prompt = (
             prompt_text.replace("{tool_results}", json.dumps(tool_results, ensure_ascii=False))
             + _FINAL_STAGE_SUFFIX
@@ -296,6 +304,40 @@ class ToolLoopExecutor:
             error_cls=ToolLoopExecutionError,
             log_prefix=f"{log_prefix}/final_answer",
         )
+
+
+    @staticmethod
+    def _answer_from_resume_texte(tool_results: dict) -> FinalAnswerOutput | None:
+        """Si un tool a fourni resume_texte (créances, dettes, prêts, impayés),
+        on l'utilise tel quel — pas de reformulation LLM (évite les
+        hallucinations type Jean/Marie inventés)."""
+        for tool_name, result in (tool_results or {}).items():
+            if not isinstance(result, dict):
+                continue
+            resume = result.get("resume_texte")
+            if not resume or not str(resume).strip():
+                continue
+            key_figures: dict = {}
+            for key in (
+                "total_general",
+                "total_en_retard",
+                "total_a_recevoir",
+                "total_a_rembourser",
+                "total_du",
+                "total_restant",
+            ):
+                if key in result and result[key] is not None:
+                    key_figures[key] = result[key]
+            logger.info(
+                "[ToolLoopExecutor] final_answer déterministe via resume_texte (tool=%s)",
+                tool_name,
+            )
+            return FinalAnswerOutput(
+                step="final_answer",
+                answer=str(resume).strip(),
+                key_figures=key_figures,
+            )
+        return None
 
     @staticmethod
     def _run_tools(

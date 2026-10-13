@@ -240,6 +240,20 @@ def get_all_open_loans(entreprise):
     total_a_recevoir = prets_donnes["total_restant"]
     total_a_rembourser = prets_recus["total_restant"]
 
+    if not (total_a_recevoir or total_a_rembourser):
+        resume = "Aucun prêt ouvert pour le moment (ni donné, ni reçu)."
+    else:
+        lignes = []
+        if total_a_recevoir > 0:
+            lignes.append(f"Prêts donnés (à te rembourser) : {total_a_recevoir:,.0f} FCFA")
+            for c in prets_donnes.get("contacts") or []:
+                lignes.append(f"  • {c['contact']} — {c['total_restant']:,.0f} FCFA")
+        if total_a_rembourser > 0:
+            lignes.append(f"Prêts reçus (à rembourser) : {total_a_rembourser:,.0f} FCFA")
+            for c in prets_recus.get("contacts") or []:
+                lignes.append(f"  • {c['contact']} — {c['total_restant']:,.0f} FCFA")
+        resume = "\n".join(lignes)
+
     return {
         "success": True,
         "prets_donnes": prets_donnes,
@@ -247,6 +261,7 @@ def get_all_open_loans(entreprise):
         "total_a_recevoir": total_a_recevoir,
         "total_a_rembourser": total_a_rembourser,
         "has_open_loan": (total_a_recevoir + total_a_rembourser) > 0,
+        "resume_texte": resume,
     }
 
 
@@ -365,6 +380,22 @@ def get_impayes(entreprise, jours_retard: int = 30):
         par_contact.values(), key=lambda e: e["total_en_retard"], reverse=True
     )
 
+    if total_general <= 0:
+        resume = "Aucun impayé : aucune créance client ouverte."
+    else:
+        lignes = [
+            f"Impayés clients : {total_general:,.0f} FCFA au total "
+            f"(dont {total_en_retard:,.0f} FCFA en retard ≥ {seuil} j)."
+        ]
+        for c in contacts:
+            flag = " — en retard" if c.get("total_en_retard", 0) > 0 else ""
+            lignes.append(f"• {c['contact']} — {c['total_du']:,.0f} FCFA{flag}")
+        if sans_contact.get("total_du", 0) > 0:
+            lignes.append(
+                f"• Sans client — {sans_contact['total_du']:,.0f} FCFA"
+            )
+        resume = "\n".join(lignes)
+
     return {
         "success": True,
         "seuil_jours": seuil,
@@ -375,4 +406,5 @@ def get_impayes(entreprise, jours_retard: int = 30):
         "repartition": repartition,
         "has_impayes": total_general > 0,
         "has_retard": total_en_retard > 0,
+        "resume_texte": resume,
     }

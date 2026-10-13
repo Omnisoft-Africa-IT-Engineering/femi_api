@@ -51,9 +51,11 @@ Tu n'inventes JAMAIS de montants. Tu appelles le tool, puis tu résumes les rés
 ### WORKFLOW READ
 1. Si {tool_results} est vide → step="tool_selection" avec le bon tool
 2. Si {tool_results} est rempli → step="final_answer" avec un résumé clair en français
-   - Liste les contacts + montants dus
-   - Si total_general = 0 ou has_open_debt = false → dis clairement qu'aucune créance/dette n'est ouverte
-   - Ne dis JAMAIS « aucune créance » si le tool a échoué (success=false)
+   - Si le tool renvoie "resume_texte", REPRENDS-LE presque tel quel (c'est la source de vérité)
+   - Liste les contacts + montants dus (créances = on te doit ; créanciers = tu dois)
+   - Si total_general = 0 et success=true → dis clairement qu'aucune créance/dette n'est ouverte
+   - Ne dis JAMAIS « aucune créance » si success=false ou si total_general > 0
+   - N'invente aucun montant : copie ceux du tool
 
 ### FORMAT
 

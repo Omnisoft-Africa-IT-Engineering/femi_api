@@ -87,6 +87,9 @@ requires_tool, needs_clarification, missing_fields, merge_context, context_resol
 Message : "qui me doit"
 → {"intents":[{"intent_id":"1","agent":"CUSTOMER","action_type":"READ","confidence":0.98,"is_sensitive":false,"requires_confirmation":false,"requires_tool":true,"needs_clarification":false,"missing_fields":[],"merge_context":false,"context_resolved":false,"raw_segment":"qui me doit"}]}
 
+Message : "mes créances"
+→ {"intents":[{"intent_id":"1","agent":"CUSTOMER","action_type":"READ","confidence":0.98,"is_sensitive":false,"requires_confirmation":false,"requires_tool":true,"needs_clarification":false,"missing_fields":[],"merge_context":false,"context_resolved":false,"raw_segment":"mes créances"}]}
+
 Message : "qui me doit de l'argent"
 → {"intents":[{"intent_id":"1","agent":"CUSTOMER","action_type":"READ","confidence":0.98,"is_sensitive":false,"requires_confirmation":false,"requires_tool":true,"needs_clarification":false,"missing_fields":[],"merge_context":false,"context_resolved":false,"raw_segment":"qui me doit de l'argent"}]}
 
