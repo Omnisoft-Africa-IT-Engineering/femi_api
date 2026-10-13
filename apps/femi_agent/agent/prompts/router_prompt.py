@@ -46,6 +46,7 @@ Ces messages vont TOUJOURS vers CUSTOMER / READ. JAMAIS ACCOUNTING. JAMAIS de cl
 - « Combien me doit Koffi ? » → CUSTOMER / READ
 - « Koffi a payé sa dette / réglé sa facture » → CUSTOMER / CREATE
 - « quels sont mes prêts », « mes prêts », « prêts en cours » → CUSTOMER / READ
+- « mes impayés », « factures impayées », « retards de paiement », « qui n'a pas payé » → CUSTOMER / READ
 
 ### AUTRES RÈGLES
 1. Document scanné ([DOCUMENT SCANNÉ — ...]) → ACCOUNTING / CREATE

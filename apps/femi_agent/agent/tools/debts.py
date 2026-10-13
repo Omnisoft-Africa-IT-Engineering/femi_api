@@ -343,3 +343,131 @@ def get_all_open_loans(entreprise):
         "total_a_rembourser": total_a_rembourser,
         "has_open_loan": (total_a_recevoir + total_a_rembourser) > 0,
     }
+
+
+def get_impayes(entreprise, jours_retard: int = 30):
+    """
+    Impayés clients = créances ouvertes (RECETTE non soldées), avec aging.
+
+    Args:
+        entreprise: instance Entreprise.
+        jours_retard: seuil en jours depuis transaction_date pour marquer
+            « en retard » (défaut 30). Les opérations plus récentes restent
+            des créances ouvertes mais pas encore « en retard ».
+
+    Returns:
+        {
+            "success": True,
+            "seuil_jours": int,
+            "contacts": [
+                {
+                    "contact": str,
+                    "contact_id": str,
+                    "operations": [
+                        {
+                            ...,
+                            "jours": int,
+                            "en_retard": bool,
+                            "tranche": "0-30"|"31-60"|"61-90"|"90+",
+                        }
+                    ],
+                    "total_du": float,
+                    "total_en_retard": float,
+                },
+                ...
+            ],
+            "sans_contact": {...},
+            "total_general": float,
+            "total_en_retard": float,
+            "repartition": {"0-30": float, "31-60": float, "61-90": float, "90+": float},
+            "has_impayes": bool,
+            "has_retard": bool,
+        }
+    """
+    from datetime import date
+
+    today = date.today()
+    try:
+        seuil = max(0, int(jours_retard))
+    except (TypeError, ValueError):
+        seuil = 30
+
+    def _tranche(jours: int) -> str:
+        if jours <= 30:
+            return "0-30"
+        if jours <= 60:
+            return "31-60"
+        if jours <= 90:
+            return "61-90"
+        return "90+"
+
+    qs = (
+        Operation.objects.filter(
+            entreprise=entreprise,
+            transaction_type="RECETTE",
+            amount_ttc__gt=F("montant_paye"),
+        )
+        .select_related("contact")
+        .order_by("transaction_date")
+    )
+
+    par_contact = {}
+    sans_contact = {
+        "operations": [],
+        "total_du": 0.0,
+        "total_en_retard": 0.0,
+    }
+    repartition = {"0-30": 0.0, "31-60": 0.0, "61-90": 0.0, "90+": 0.0}
+    total_general = 0.0
+    total_en_retard = 0.0
+
+    for op in qs:
+        serialized = _serialize_operation_ouverte(op)
+        solde = serialized["solde_restant"]
+        if solde <= 0:
+            continue
+        jours = (today - op.transaction_date).days
+        if jours < 0:
+            jours = 0
+        tranche = _tranche(jours)
+        en_retard = jours >= seuil
+        serialized["jours"] = jours
+        serialized["en_retard"] = en_retard
+        serialized["tranche"] = tranche
+        if op.contact_id is None:
+            serialized["client_ou_fournisseur"] = op.vendor_or_client
+            cible = sans_contact
+        else:
+            cible = par_contact.setdefault(
+                op.contact_id,
+                {
+                    "contact": op.contact.nom,
+                    "contact_id": str(op.contact_id),
+                    "operations": [],
+                    "total_du": 0.0,
+                    "total_en_retard": 0.0,
+                },
+            )
+        cible["operations"].append(serialized)
+        cible["total_du"] += solde
+        total_general += solde
+        repartition[tranche] += solde
+        if en_retard:
+            cible["total_en_retard"] += solde
+            total_en_retard += solde
+
+    contacts = sorted(
+        par_contact.values(), key=lambda e: e["total_en_retard"], reverse=True
+    )
+
+    return {
+        "success": True,
+        "seuil_jours": seuil,
+        "contacts": contacts,
+        "sans_contact": sans_contact,
+        "total_general": total_general,
+        "total_en_retard": total_en_retard,
+        "repartition": repartition,
+        "has_impayes": total_general > 0,
+        "has_retard": total_en_retard > 0,
+    }

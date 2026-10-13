@@ -6,6 +6,7 @@ from apps.femi_agent.agent.tools.debts import (
     get_all_open_debts,
     get_all_open_payables,
     get_all_open_loans,
+    get_impayes,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "get_all_open_debts",
     "get_all_open_payables",
     "get_all_open_loans",
+    "get_impayes",
 ]
