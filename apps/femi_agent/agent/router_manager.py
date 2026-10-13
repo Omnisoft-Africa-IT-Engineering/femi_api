@@ -115,7 +115,7 @@ logger = logging.getLogger(__name__)
 # Délais maximaux du rédacteur pour les messages courts (salutations,
 # avis d'erreur) : au-delà, on envoie le texte de secours plutôt que de
 # faire attendre l'utilisateur.
-_SHORT_REPLY_TIMEOUT = 8.0
+_SHORT_REPLY_TIMEOUT =25
 
 
 DispatchResult = Optional[
@@ -238,6 +238,13 @@ class FemiRouterManager:
                 combined_text,
                 history=history_text,
                 **pending.router_kwargs(),
+            )
+
+            # Force merge si réponse courte à une action en attente
+            # (ex. "Mr Toto" après "pour quel client ce devis ?")
+            pending.force_merge_on_short_reply(
+                router_output.intents,
+                combined_text,
             )
 
             pending.start_turn(
@@ -466,6 +473,13 @@ class FemiRouterManager:
                 combined_text,
                 history=history_text,
                 **pending.router_kwargs(),
+            )
+
+            # Force merge si réponse courte à une action en attente
+            # (ex. "Mr Toto" après "pour quel client ce devis ?")
+            pending.force_merge_on_short_reply(
+                router_output.intents,
+                combined_text,
             )
 
             pending.start_turn(
@@ -1615,8 +1629,8 @@ class FemiRouterManager:
         "annee": "Pour quelle année ?",
         "wrong_agent": "Peux-tu reformuler ta demande en précisant ce que tu veux faire ?",
         "search_error": "Je n'ai pas réussi à retrouver cette information. Peux-tu reformuler ?",
-        "client_name": "Pour quel client est ce devis ?",
-        "quote_items": "Quels articles ou services veux-tu mettre sur ce devis, avec leurs quantités et leurs prix ?",
+        "client_name": "C'est pour quel client ce devis ?",
+        "quote_items": "Quels articles ou services mettre sur le devis (quantités et prix) ?",
         "quote_price": "Quel est le prix unitaire de chaque article du devis ?",
     }
 
