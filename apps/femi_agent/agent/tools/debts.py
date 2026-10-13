@@ -21,7 +21,12 @@ jour, ces totaux doivent être recalculés par devise avant d'être sommés.
 
 from django.db.models import F
 
-from apps.femi_account.models import Operation, Contact  # noqa: F401  (Entreprise non utilisé directement ici)
+from apps.femi_account.models import Operation, Contact  # noqa: F401
+from apps.femi_account.soldes_ouverts import (
+    lister_creances_par_contact,
+    lister_dettes_fournisseurs_par_contact,
+    qs_creances_ouvertes,
+)
 
 
 def _solde_ouvert(operation):
@@ -43,47 +48,55 @@ def _serialize_operation_ouverte(operation):
 
 def get_contact_open_debts(entreprise, contact):
     """
-    Créances clients ouvertes pour un contact donné (ventes à crédit non soldées).
+    Créances clients ouvertes pour un contact donné (ventes non soldées).
 
-    Une "dette" ici = de l'argent que le CONTACT doit à l'ENTREPRISE.
-    → Operation.transaction_type == "RECETTE" ET statut_paiement == "CREDIT".
-
-    Args:
-        entreprise: instance Entreprise.
-        contact: instance Contact (ou None — retourne alors une liste vide).
-
-    Returns:
-        {
-            "contact": "<nom>" | None,
-            "operations": [ {operation_id, transaction_type, date,
-                              amount_ttc, montant_paye, solde_restant,
-                              description}, ... ],   # triées par date croissante (FIFO)
-            "total_du": float,
-            "has_open_debt": bool,
-        }
+    Aligné sur la KPI « Créances » (kpi_service) :
+    RECETTE avec amount_ttc > montant_paye (solde restant > 0).
+    On ne filtre plus uniquement sur statut_paiement=CREDIT, car des
+    opérations partiellement payées ou mal taguées apparaissaient sur le
+    dashboard mais pas dans le chat.
     """
     if contact is None:
-        return {"success": True, "contact": None, "operations": [], "total_du": 0.0, "has_open_debt": False}
+        return {
+            "success": True,
+            "contact": None,
+            "operations": [],
+            "total_du": 0.0,
+            "has_open_debt": False,
+            "resume_texte": "Aucun contact précisé.",
+        }
 
-    qs = (
-        Operation.objects.filter(
-            entreprise=entreprise,
-            contact=contact,
-            transaction_type="RECETTE",
-            statut_paiement="CREDIT",
+    qs = qs_creances_ouvertes(entreprise).filter(contact=contact)
+
+    operations = []
+    total_du = 0.0
+    for op in qs:
+        serialized = _serialize_operation_ouverte(op)
+        if serialized["solde_restant"] <= 0:
+            continue
+        operations.append(serialized)
+        total_du += serialized["solde_restant"]
+
+    if not operations:
+        resume = f"{contact.nom} ne te doit rien pour le moment (aucune créance ouverte)."
+    else:
+        lignes = [
+            f"- {o['date']}: {o['solde_restant']:,.0f} FCFA restants"
+            f"{(' (' + o['description'] + ')') if o.get('description') else ''}"
+            for o in operations
+        ]
+        resume = (
+            f"{contact.nom} te doit {total_du:,.0f} FCFA au total :\n"
+            + "\n".join(lignes)
         )
-        .order_by("transaction_date")
-    )
-
-    operations = [_serialize_operation_ouverte(op) for op in qs]
-    total_du = sum((op["solde_restant"] for op in operations), 0.0)
 
     return {
         "success": True,
         "contact": contact.nom,
         "operations": operations,
         "total_du": total_du,
-        "has_open_debt": len(operations) > 0,
+        "has_open_debt": total_du > 0,
+        "resume_texte": resume,
     }
 
 
@@ -132,136 +145,28 @@ def get_contact_open_loans(entreprise, contact):
 
 def get_all_open_debts(entreprise):
     """
-    Vue d'ensemble des créances clients ouvertes, groupées par contact
-    (rapport de type "aging report").
+    Vue d'ensemble des créances clients ouvertes, groupées par contact.
 
-    Ne couvre QUE les créances clients (RECETTE non soldées), pas les prêts
-    donnés — utiliser get_contact_open_loans / une variante dédiée pour
-    une vue globale des prêts si besoin plus tard.
-
-    Même définition que la KPI « Créances » (kpi_service) : toute RECETTE
-    dont amount_ttc > montant_paye, AVEC OU SANS contact rattaché. Les
-    opérations sans contact (facture sans client enregistré) sont
-    regroupées dans "sans_contact" au lieu d'être ignorées, sinon le
-    dashboard affichait une créance que le chat ne retrouvait pas.
-
-    Args:
-        entreprise: instance Entreprise.
-
-    Returns:
-        {
-            "contacts": [
-                {
-                    "contact": "<nom>",
-                    "contact_id": "<uuid>",
-                    "operations": [ {...}, ... ],
-                    "total_du": float,
-                },
-                ...
-            ],   # triés par total_du décroissant (plus gros débiteurs en premier)
-            "sans_contact": {"operations": [ {..., "client_ou_fournisseur": str | None} ],
-                              "total_du": float},
-            "total_general": float,   # contacts + sans_contact
-            "has_open_debt": bool,
-        }
+    Délègue à apps.femi_account.soldes_ouverts (même source que la KPI
+    « Créances »). total_general == kpi.calc_creances(...).
     """
-    qs = (
-        Operation.objects.filter(
-            entreprise=entreprise,
-            transaction_type="RECETTE",
-            amount_ttc__gt=F("montant_paye"),
-        )
-        .select_related("contact")
-        .order_by("contact__nom", "transaction_date")
-    )
+    devise = getattr(entreprise, "devise", None) or "FCFA"
+    devise = {"XOF": "FCFA", "XAF": "FCFA"}.get(str(devise).upper(), devise)
+    return lister_creances_par_contact(entreprise, devise=devise)
 
-    par_contact = {}
-    sans_contact = {"operations": [], "total_du": 0.0}
-    for op in qs:
-        serialized = _serialize_operation_ouverte(op)
-        if op.contact_id is None:
-            serialized["client_ou_fournisseur"] = op.vendor_or_client
-            cible = sans_contact
-        else:
-            cible = par_contact.setdefault(
-                op.contact_id,
-                {"contact": op.contact.nom, "contact_id": str(op.contact_id), "operations": [], "total_du": 0.0},
-            )
-        cible["operations"].append(serialized)
-        cible["total_du"] += serialized["solde_restant"]
-
-    contacts = sorted(par_contact.values(), key=lambda e: e["total_du"], reverse=True)
-    total_general = sum((c["total_du"] for c in contacts), 0.0) + sans_contact["total_du"]
-
-    return {
-        "success": True,
-        "contacts": contacts,
-        "sans_contact": sans_contact,
-        "total_general": total_general,
-        "has_open_debt": total_general > 0,
-    }
 
 
 def get_all_open_payables(entreprise):
     """
-    Vue d'ensemble des dettes envers les fournisseurs (achats à crédit non
-    soldés), groupées par contact — l'équivalent côté fournisseurs de
-    get_all_open_debts.
+    Dettes fournisseurs ouvertes, groupées par contact.
 
-    Une "dette fournisseur" ici = de l'argent que l'ENTREPRISE doit à un
-    CONTACT → Operation.transaction_type == "DEPENSE" ET statut_paiement ==
-    solde > 0 ; solde = amount_ttc - montant_paye, comme kpi_service
-    (calc_dettes, part fournisseurs). Les emprunts reçus (PRET_RECU) ne sont
-    PAS inclus.
-
-    Returns:
-        {
-            "contacts": [
-                {"contact": "<nom>", "contact_id": "<uuid>",
-                 "operations": [ {...}, ... ], "total_a_payer": float},
-                ...
-            ],   # triés par total_a_payer décroissant
-            "sans_contact": {"operations": [...], "total_a_payer": float},
-            "total_general": float,   # contacts + sans_contact
-            "has_open_payable": bool,
-        }
+    Même source que kpi.calc_dettes_fournisseurs.
     """
-    qs = (
-        Operation.objects.filter(
-            entreprise=entreprise,
-            transaction_type="DEPENSE",
-            amount_ttc__gt=F("montant_paye"),
-        )
-        .select_related("contact")
-        .order_by("contact__nom", "transaction_date")
-    )
+    devise = getattr(entreprise, "devise", None) or "FCFA"
+    devise = {"XOF": "FCFA", "XAF": "FCFA"}.get(str(devise).upper(), devise)
+    return lister_dettes_fournisseurs_par_contact(entreprise, devise=devise)
 
-    par_contact = {}
-    sans_contact = {"operations": [], "total_a_payer": 0.0}
-    for op in qs:
-        serialized = _serialize_operation_ouverte(op)
-        if serialized["solde_restant"] <= 0:
-            continue
-        if op.contact_id is None:
-            cible = sans_contact
-        else:
-            cible = par_contact.setdefault(
-                op.contact_id,
-                {"contact": op.contact.nom, "contact_id": str(op.contact_id), "operations": [], "total_a_payer": 0.0},
-            )
-        cible["operations"].append(serialized)
-        cible["total_a_payer"] += serialized["solde_restant"]
 
-    contacts = sorted(par_contact.values(), key=lambda e: e["total_a_payer"], reverse=True)
-    total_general = sum((c["total_a_payer"] for c in contacts), 0.0) + sans_contact["total_a_payer"]
-
-    return {
-        "success": True,
-        "contacts": contacts,
-        "sans_contact": sans_contact,
-        "total_general": total_general,
-        "has_open_payable": total_general > 0,
-    }
 
 def get_all_open_loans(entreprise):
     """

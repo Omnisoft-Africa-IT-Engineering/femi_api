@@ -29,6 +29,11 @@ from apps.femi_account import kpi_service as kpi
 from apps.femi_account.kpi_views import avec_variation
 from apps.femi_account.models import Entreprise, Operation, Utilisateur
 from apps.femi_agent.agent.tools import financials as chat
+from apps.femi_agent.agent.tools.debts import get_all_open_debts, get_all_open_payables
+from apps.femi_account.soldes_ouverts import (
+    total_creances_ouvertes,
+    total_dettes_fournisseurs_ouvertes,
+)
 
 
 def _operation(entreprise, type_, ttc, statut="PAYE", paye=None, date=None):
@@ -202,3 +207,28 @@ class KpiUniformiteTests(APITestCase):
         self.assertIsNone(dashboard["operations"]["staff_count"])
         self.assertIsNone(dashboard["ai_insights"]["alerts_count"])
         self.assertEqual(dashboard["kpis"]["services_count"], 0)
+
+    def test_creances_kpi_egal_chat(self):
+        """KPI Créances == total chat get_all_open_debts (source unique)."""
+        ctx = self._contexte()
+        kpi_val = kpi.calc_creances(ctx)
+        chat_payload = get_all_open_debts(self.entreprise)
+        self.assertEqual(kpi_val, 150000)
+        self.assertEqual(chat_payload["total_general"], kpi_val)
+        self.assertEqual(total_creances_ouvertes(self.entreprise), kpi_val)
+        self.assertTrue(chat_payload["has_open_debt"])
+        self.assertIn("150", chat_payload["resume_texte"].replace("\u202f", "").replace(" ", "").replace(",", ""))
+
+    def test_dettes_fournisseurs_kpi_egal_chat(self):
+        """KPI dettes fournisseurs == total chat get_all_open_payables."""
+        ctx = self._contexte()
+        kpi_val = kpi.calc_dettes_fournisseurs(ctx)
+        chat_payload = get_all_open_payables(self.entreprise)
+        self.assertEqual(kpi_val, 80000)
+        self.assertEqual(chat_payload["total_general"], kpi_val)
+        self.assertEqual(
+            total_dettes_fournisseurs_ouvertes(self.entreprise), kpi_val
+        )
+        self.assertTrue(chat_payload["has_open_payable"])
+
+
