@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------
 
 CONVERSATION_GROUPING_HOURS = 24
-CONVERSATION_HISTORY_WINDOW = 6
+CONVERSATION_HISTORY_WINDOW = 12
 
 # Normalisation des valeurs de "source"/"canal" utilisées ailleurs dans le
 # code (router_manager.py reçoit "MOBILE", "whatsapp", etc.) vers les

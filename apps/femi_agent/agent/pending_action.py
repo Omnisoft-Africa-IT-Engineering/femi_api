@@ -149,6 +149,76 @@ class PendingTurn:
         self.turn_text = turn_text or ""
         self.intents_count = intents_count
 
+    def force_merge_on_short_reply(
+        self,
+        intents: list,
+        message_text: str,
+    ) -> None:
+        """Si une action est en attente et que le message est une réponse
+        courte (nom, montant, oui/non, « je t'ai déjà dit »...), force
+        merge_context=true et aligne l'agent sur le pending.
+
+        Ne dépend plus uniquement du LLM pour la fusion multi-tour.
+        """
+        if not self.entries or not intents:
+            return
+
+        text = (message_text or "").strip()
+        if not text:
+            return
+
+        normalized = text.lower()
+        forget_phrases = (
+            "je t'ai déjà",
+            "je tai deja",
+            "je t'ai deja",
+            "tu as oublié",
+            "tu as oublie",
+            "tu as déjà",
+            "tu as deja",
+            "je l'ai déjà dit",
+            "je l'ai deja dit",
+            "je tai deja donne",
+            "je t'ai déjà donné",
+            "je t'ai deja donne",
+        )
+        is_forget = any(p in normalized for p in forget_phrases)
+        is_short = is_forget or (len(text) <= 80 and "\n" not in text and text.count(" ") <= 12)
+
+        if not is_short:
+            return
+
+        entry = self.entries[0]
+        pending_agent = entry.get("agent")
+        if not pending_agent:
+            return
+
+        for intent in intents:
+            try:
+                if getattr(intent, "agent", None) in (
+                    "UNKNOWN",
+                    "SETTINGS",
+                ) or getattr(intent, "agent", None) != pending_agent:
+                    intent.agent = pending_agent
+                    if entry.get("action_type"):
+                        intent.action_type = entry["action_type"]
+                intent.merge_context = True
+                # Laisse l'agent métier recalculer needs_clarification /
+                # missing_fields à partir du texte fusionné.
+                if is_forget:
+                    intent.needs_clarification = False
+            except Exception:
+                logger.exception(
+                    "[pending_action] Échec force_merge sur un intent."
+                )
+
+        logger.info(
+            "[pending_action] force_merge_on_short_reply: agent=%s | msg=%r",
+            pending_agent,
+            text[:80],
+        )
+
+
     # ------------------------------------------------------------
     # Fourniture au Router
     # ------------------------------------------------------------
