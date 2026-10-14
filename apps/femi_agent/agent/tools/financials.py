@@ -235,6 +235,55 @@ def calculate_balance(entreprise, periode=None, **kwargs):
     ctx = KpiContexte(entreprise, None, None)
     return {"balance": calc_tresorerie(ctx), "currency": _devise(entreprise)}
 
+def get_bilan(entreprise, periode="ce_mois", date_debut=None, date_fin=None):
+    """
+    Mini-bilan de période : CA, dépenses, bénéfice, marge, trésorerie cumulée.
+    Renvoie resume_texte pour réponse déterministe WhatsApp.
+    """
+    rev = get_revenue(entreprise, periode, date_debut, date_fin)
+    exp = get_expenses(entreprise, periode, date_debut, date_fin)
+    prof = calculate_profit(entreprise, periode, date_debut, date_fin)
+    marg = calculate_margin(entreprise, periode, date_debut, date_fin)
+    bal = calculate_balance(entreprise)
+    devise = rev.get("currency") or _devise(entreprise) or "FCFA"
+    if str(devise).upper() in ("XOF", "XAF"):
+        devise = "FCFA"
+
+    def _fmt(n):
+        try:
+            return f"{float(n):,.0f}".replace(",", " ")
+        except (TypeError, ValueError):
+            return str(n)
+
+    ca = rev.get("revenue", 0) or 0
+    depenses = exp.get("expenses", 0) or 0
+    benef = prof.get("profit", 0) or 0
+    marge = marg.get("margin_percent")
+    treso = bal.get("balance", 0) or 0
+    per = rev.get("periode") or periode
+
+    marge_txt = f"{marge:.1f} %" if marge is not None else "n/a"
+    resume = (
+        f"Bilan ({per}) :\n"
+        f"• Chiffre d'affaires : {_fmt(ca)} {devise}\n"
+        f"• Dépenses : {_fmt(depenses)} {devise}\n"
+        f"• Bénéfice : {_fmt(benef)} {devise}\n"
+        f"• Marge : {marge_txt}\n"
+        f"• Trésorerie (solde) : {_fmt(treso)} {devise}"
+    )
+    return {
+        "success": True,
+        "periode": per,
+        "revenue": ca,
+        "expenses": depenses,
+        "profit": benef,
+        "margin_percent": marge,
+        "balance": treso,
+        "currency": devise,
+        "resume_texte": resume,
+    }
+
+
 
 _INDICATEUR_TOOLS = {
     "revenue": get_revenue,

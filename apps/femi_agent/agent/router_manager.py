@@ -1706,6 +1706,28 @@ class FemiRouterManager:
             )
             fact_lines.extend(f"- {a}" for a in anomalies)
 
+        # Devis : le nom donné est le CLIENT, pas l'interlocuteur.
+        # Évite « Salut Mr Hola ! » quand l'utilisateur répond juste le nom.
+        codes = [c for c in missing_fields if c not in cls._CLARIFICATION_SKIP_CODES]
+        if "quote_items" in codes and "client_name" not in codes:
+            name = (user_message or "").strip()
+            if name and len(name) <= 80 and not any(
+                w in name.lower()
+                for w in ("devis", "article", "service", "prix", "quantit", "fcfa", " xof")
+            ):
+                return (
+                    f"Client noté : {name}.\n"
+                    "Quels articles ou services mettre sur le devis "
+                    "(avec quantités et prix) ?"
+                )
+
+        if "quote_items" in codes or "client_name" in codes:
+            fact_lines.append(
+                "Règle devis : un nom seul (ex. Mr Hola) est le CLIENT du devis, "
+                "pas l'interlocuteur. Ne le salue jamais. Dis « Client noté : … » "
+                "puis demande les articles."
+            )
+
         return write_natural_reply(
             facts="\n".join(fact_lines),
             reply_type="clarification",

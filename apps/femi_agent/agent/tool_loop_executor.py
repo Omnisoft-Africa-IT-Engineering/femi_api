@@ -389,10 +389,21 @@ class ToolLoopExecutor:
                 "debiteur",
                 "debiteurs",
                 "qui doit me",
-                "mes clients",  # consultation créances clients
+                "mes clients",
             )
         ):
             tool_name = "get_all_open_debts"
+        elif any(
+            k in msg
+            for k in (
+                "bilan",
+                "synthese",
+                "synthese financiere",
+                "point financier",
+                "resume financier",
+            )
+        ):
+            tool_name = "get_bilan"
 
         if tool_name is None:
             return selection
@@ -410,9 +421,20 @@ class ToolLoopExecutor:
             tool_name,
             message_text[:80],
         )
+        params: dict = {}
+        if tool_name == "get_bilan":
+            if any(k in msg for k in ("aujourd", "ce jour", "today")):
+                params["periode"] = "aujourd_hui"
+            elif any(k in msg for k in ("semaine",)):
+                params["periode"] = "cette_semaine"
+            elif any(k in msg for k in ("annee", "année")):
+                params["periode"] = "cette_annee"
+            else:
+                params["periode"] = "ce_mois"
+
         return ToolSelectionOutput(
             step="tool_selection",
-            tool_calls=[ToolCallSchema(tool=tool_name, params={})],
+            tool_calls=[ToolCallSchema(tool=tool_name, params=params)],
             needs_clarification=False,
             missing_fields=[],
         )

@@ -47,6 +47,7 @@ _TOOL_NAMES = (
     "get_cashflow",
     "calculate_balance",
     "compare_periods",
+    "get_bilan",
 )
 
 
