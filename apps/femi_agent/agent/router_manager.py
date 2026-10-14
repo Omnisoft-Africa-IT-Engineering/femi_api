@@ -1762,6 +1762,9 @@ class FemiRouterManager:
         "indicator": "Quel indicateur veux-tu : chiffre d'affaires, dépenses, bénéfice, marge ou trésorerie ?",
         "indicateur": "Quel indicateur veux-tu : chiffre d'affaires, dépenses, bénéfice, marge ou trésorerie ?",
         "date_range_incomplete": "Pour quelle période exactement ? (ex : ce mois-ci, septembre, du 1er au 15)",
+        "periode": "Pour quelle période ? (ex : aujourd'hui, ce mois-ci, le mois dernier, cette année)",
+        "période": "Pour quelle période ? (ex : aujourd'hui, ce mois-ci, le mois dernier, cette année)",
+        "period": "Pour quelle période ? (ex : aujourd'hui, ce mois-ci, le mois dernier, cette année)",
         "annee": "Pour quelle année ?",
         "wrong_agent": "Peux-tu reformuler ta demande en précisant ce que tu veux faire ?",
         "search_error": "Je n'ai pas réussi à retrouver cette information. Peux-tu reformuler ?",
@@ -2146,13 +2149,17 @@ class FemiRouterManager:
                 quote_interdit = True
                 continue
 
-            if intent.needs_clarification:
-                needs_clarification = True
+            # FINANCIAL_ANALYST décide seul s'il doit clarifier (son propre
+            # résultat remonte plus bas) : le drapeau du routeur ne doit pas
+            # s'ajouter à une réponse déjà donnée.
+            if intent.agent != "FINANCIAL_ANALYST":
+                if intent.needs_clarification:
+                    needs_clarification = True
 
-            for field in intent.missing_fields:
+                for field in intent.missing_fields:
 
-                if field not in missing_fields:
-                    missing_fields.append(field)
+                    if field not in missing_fields:
+                        missing_fields.append(field)
 
             # ----------------------------------------------------
             # Dispatch agent
@@ -2910,13 +2917,15 @@ class FemiRouterManager:
                 quote_interdit = True
                 continue
 
-            if intent.needs_clarification:
-                needs_clarification = True
+            # FINANCIAL_ANALYST décide seul s'il doit clarifier (voir sync).
+            if intent.agent != "FINANCIAL_ANALYST":
+                if intent.needs_clarification:
+                    needs_clarification = True
 
-            for field in intent.missing_fields:
+                for field in intent.missing_fields:
 
-                if field not in missing_fields:
-                    missing_fields.append(field)
+                    if field not in missing_fields:
+                        missing_fields.append(field)
 
             segment, doc_flag = (
                 pending.resolve(intent, bool(image_bytes))
