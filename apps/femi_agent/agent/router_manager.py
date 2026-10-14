@@ -1389,11 +1389,151 @@ class FemiRouterManager:
             return [natural] + messages_speciaux
 
     @classmethod
+    def _montant_remboursement(cls, montant, currency) -> str:
+        devise = {"XOF": "FCFA", "XAF": "FCFA"}.get(
+            str(currency or "").upper(), currency
+        )
+        return cls._format_montant(montant, devise)
+
+    @classmethod
+    def _message_remboursement(cls, detail: dict) -> str:
+        """Message déterministe après imputation d'un remboursement sur les
+        opérations ouvertes d'un contact (voir accounting_manager)."""
+        devise = detail.get("currency")
+        contact = detail.get("contact") or "ce contact"
+        type_cible = detail.get("type_cible")
+        impute = cls._montant_remboursement(detail.get("montant_impute"), devise)
+        reste = detail.get("reste_du") or 0
+        reste_txt = cls._montant_remboursement(reste, devise)
+
+        if type_cible == "PRET_RECU":
+            debut = f"✅ Remboursement de {impute} enregistré pour ton prêt auprès de {contact}."
+            fin = (
+                f"Il te reste {reste_txt} à rembourser."
+                if reste > 0
+                else "Ce prêt est entièrement remboursé."
+            )
+        elif type_cible == "PRET_DONNE":
+            debut = f"✅ Remboursement de {impute} reçu de {contact}."
+            fin = (
+                f"{contact} te doit encore {reste_txt} sur ce prêt."
+                if reste > 0
+                else "Ce prêt est entièrement remboursé."
+            )
+        elif type_cible == "DEPENSE":
+            debut = f"✅ Paiement de {impute} enregistré pour ta dette envers {contact}."
+            fin = (
+                f"Il te reste {reste_txt} à lui payer."
+                if reste > 0
+                else f"Ta dette envers {contact} est entièrement réglée."
+            )
+        else:
+            debut = f"✅ Paiement de {impute} reçu de {contact}, imputé sur sa dette."
+            fin = (
+                f"{contact} te doit encore {reste_txt}."
+                if reste > 0
+                else f"{contact} ne te doit plus rien."
+            )
+
+        message = f"{debut} {fin}"
+        surplus = detail.get("surplus") or 0
+        if surplus > 0:
+            message += (
+                f" Tu as indiqué {cls._montant_remboursement(surplus, devise)} "
+                f"de plus que le solde : ce surplus n'a pas été enregistré. "
+                f"Dis-moi si c'est une avance ou une erreur de saisie."
+            )
+        return message
+
+    @classmethod
+    def _message_remboursement_refuse(cls, detail: dict) -> str:
+        """Message quand un remboursement n'a pas pu être imputé : RIEN n'a
+        été enregistré (ni opération, ni contact), pour ne pas compter le
+        paiement deux fois."""
+        raison = detail.get("raison")
+        devise = detail.get("currency")
+        nom = detail.get("nom_saisi") or ""
+        montant = cls._montant_remboursement(detail.get("montant_recu"), devise)
+        type_cible = detail.get("type_cible")
+        propositions = detail.get("propositions") or []
+        candidats = detail.get("candidats") or []
+        est_pret = type_cible in ("PRET_DONNE", "PRET_RECU")
+        objet = "prêt" if est_pret else "dette"
+
+        if raison == "montant":
+            return (
+                "Je n'ai rien enregistré : je n'ai pas compris le montant "
+                "payé. Quel est le montant ?"
+            )
+
+        if raison == "ambigu":
+            return (
+                f"J'ai plusieurs contacts qui s'appellent « {nom} » "
+                f"({', '.join(propositions)}). Je n'ai rien enregistré : "
+                f"redis-moi le paiement en précisant lequel."
+            )
+
+        if raison == "proche":
+            return (
+                f"Je ne trouve pas « {nom} » dans tes contacts. Tu veux dire "
+                f"{' ou '.join(propositions)} ? Je n'ai rien enregistré : "
+                f"redis-moi le paiement avec le bon nom."
+            )
+
+        if raison == "aucune_dette":
+            contact = detail.get("contact") or nom
+            if type_cible == "RECETTE":
+                conseil = (
+                    f"Si c'est une nouvelle vente déjà payée, dis-le-moi "
+                    f"(ex. « vente de {montant} à {contact}, payée »)."
+                )
+            elif type_cible == "DEPENSE":
+                conseil = (
+                    f"Si c'est un nouvel achat déjà payé, dis-le-moi "
+                    f"(ex. « achat de {montant} chez {contact}, payé »)."
+                )
+            else:
+                conseil = "Si c'est une autre opération, précise-moi laquelle."
+            return (
+                f"{contact} n'a aucun{'' if est_pret else 'e'} {objet} "
+                f"ouvert{'' if est_pret else 'e'}, donc je n'ai pas enregistré "
+                f"ce paiement de {montant} (pour ne pas le compter deux fois). "
+                f"{conseil}"
+            )
+
+        # sans_nom / inconnu
+        if raison == "inconnu":
+            debut = (
+                f"Je ne trouve aucun contact « {nom} » dans tes comptes, donc "
+                f"je n'ai pas enregistré ce paiement de {montant}."
+            )
+        else:
+            debut = (
+                f"Je n'ai pas enregistré ce paiement de {montant} : je ne sais "
+                f"pas de qui il vient."
+            )
+        suite = (
+            f" Ceux qui ont encore un solde : {', '.join(candidats)}."
+            if candidats
+            else ""
+        )
+        return (
+            f"{debut}{suite} Redis-moi le paiement avec le nom du contact "
+            f"(ex. « Koffi m'a payé 10 000 »)."
+        )
+
+    @classmethod
     def _message_facture_existante(cls, txn) -> str:
         """Message pour une facture déjà enregistrée : règlement imputé,
         facture déjà soldée ou doublon évité."""
         statut = getattr(txn, "_statut_enregistrement", None)
         detail = getattr(txn, "_detail_enregistrement", None) or {}
+
+        if statut == "remboursement":
+            return cls._message_remboursement(detail)
+        if statut == "remboursement_refuse":
+            return cls._message_remboursement_refuse(detail)
+
         reference = detail.get("reference") or "?"
         devise = detail.get("currency")
         contact = f" ({detail['contact']})" if detail.get("contact") else ""
@@ -1514,28 +1654,19 @@ class FemiRouterManager:
 
     @classmethod
     def _summarize_customer_payment(cls, result: CustomerExtractionOutput) -> str:
+        """Filet de sécurité : le sous-flux CUSTOMER/CREATE n'enregistre RIEN
+        en base. Les paiements de dette (client ou fournisseur) passent par
+        ACCOUNTING (check_open_debt, voir accounting_manager). Si un message
+        arrive quand même ici, on le dit au lieu d'afficher un faux « ✅
+        enregistré », et on demande le sens du paiement."""
         montant = cls._format_montant(result.amount_ttc, result.currency)
         contact = result.contact or "ce contact"
-        raw_desc = (getattr(result, "description", None) or "").strip()
-        desc_fallback = f" ({raw_desc})" if raw_desc else ""
-
-        fallback = (
-            f"✅ Paiement de {montant}{desc_fallback} enregistré pour {contact}."
+        return (
+            f"Je n'ai rien enregistré pour ce paiement de {montant}, car je "
+            f"ne sais pas dans quel sens il va. Dis-moi par exemple « {contact} "
+            f"m'a payé {montant} » (un client te règle) ou « j'ai réglé "
+            f"{montant} de ma dette chez {contact} » (tu règles un fournisseur)."
         )
-        facts = (
-            f"Paiement client/fournisseur enregistré avec succès.\n"
-            f"- montant: {montant}\n"
-            f"- contact: {contact}\n"
-            f"- description: {raw_desc or 'n/a'}\n"
-            f"- currency: {result.currency or 'FCFA'}"
-        )
-        return write_natural_reply(
-            facts=facts,
-            reply_type="customer_payment_success",
-            fallback=fallback,
-            temperature=0.7,
-        )
-
 
     @staticmethod
     def _format_values_for_facts(values) -> str:
