@@ -153,3 +153,133 @@ def find_matching_operations(
         result["candidates"] = [_serialize_operation_candidate(op) for op in operations]
 
     return result
+
+def list_recent_operations(entreprise, limit: int = 15, date_range: str | None = None):
+    """Liste les opérations récentes (lecture seule) pour WhatsApp."""
+    try:
+        lim = max(1, min(int(limit or 15), 30))
+    except (TypeError, ValueError):
+        lim = 15
+
+    qs = Operation.objects.filter(entreprise=entreprise).select_related("contact")
+    if date_range:
+        try:
+            start, end = resolve_periode(date_range, None, None)
+            if start is not None:
+                qs = qs.filter(transaction_date__gte=start, transaction_date__lte=end)
+        except Exception:
+            pass
+    qs = qs.order_by("-transaction_date", "-id")[:lim]
+    operations = list(qs)
+
+    if not operations:
+        resume = "Aucune opération trouvée pour le moment."
+    else:
+        lignes = []
+        for op in operations:
+            contact = f" ({op.contact.nom})" if op.contact_id else ""
+            desc = f" — {op.description}" if op.description else ""
+            amt = f"{float(op.amount_ttc):,.0f}".replace(",", " ")
+            lignes.append(
+                f"• {op.transaction_type} {amt} "
+                f"{op.currency or 'FCFA'} le {op.transaction_date.isoformat()}"
+                f"{contact}{desc}"
+            )
+        resume = f"Voici tes {len(operations)} dernière(s) opération(s) :\n" + "\n".join(lignes)
+
+    return {
+        "success": True,
+        "count": len(operations),
+        "operations": [_serialize_operation_full(op) for op in operations],
+        "resume_texte": resume,
+    }
+
+
+def apply_operation_change(
+    entreprise,
+    operation_id: str,
+    action_type: str,
+    proposed_values: dict | None = None,
+):
+    """Applique une proposition UPDATE/DELETE après confirmation utilisateur."""
+    from django.db import transaction
+
+    try:
+        op = Operation.objects.select_related("contact").get(
+            id=operation_id, entreprise=entreprise
+        )
+    except Operation.DoesNotExist:
+        return {
+            "success": False,
+            "error": "operation_introuvable",
+            "resume_texte": "Je ne retrouve plus cette opération. Elle a peut-être déjà été modifiée.",
+        }
+
+    action = (action_type or "UPDATE").upper()
+    if action == "DELETE":
+        if hasattr(op, "annulee"):
+            op.annulee = True
+        elif hasattr(op, "is_cancelled"):
+            op.is_cancelled = True
+        else:
+            prefix = "[ANNULÉ] "
+            if op.description and not str(op.description).startswith(prefix):
+                op.description = prefix + str(op.description)
+            elif not op.description:
+                op.description = "[ANNULÉ]"
+        op.save()
+        amt = f"{float(op.amount_ttc):,.0f}".replace(",", " ")
+        resume = (
+            f"Opération annulée : {op.transaction_type} {amt} "
+            f"le {op.transaction_date.isoformat()}."
+        )
+        return {"success": True, "action": "DELETE", "operation_id": str(op.id), "resume_texte": resume}
+
+    values = proposed_values or {}
+    changes = []
+    if "amount_ttc" in values and values["amount_ttc"] is not None:
+        old = float(op.amount_ttc)
+        op.amount_ttc = values["amount_ttc"]
+        changes.append(
+            f"montant {old:,.0f} → {float(op.amount_ttc):,.0f}".replace(",", " ")
+        )
+    if "description" in values and values["description"] is not None:
+        op.description = values["description"]
+        changes.append("description mise à jour")
+    if "category" in values and values["category"] is not None:
+        op.category = values["category"]
+        changes.append(f"catégorie → {op.category}")
+    if "payment_method" in values and values["payment_method"] is not None:
+        op.payment_method = values["payment_method"]
+        changes.append(f"paiement → {op.payment_method}")
+    if "transaction_date" in values and values["transaction_date"]:
+        from datetime import date as date_cls
+        d = values["transaction_date"]
+        if isinstance(d, str):
+            op.transaction_date = date_cls.fromisoformat(d[:10])
+        else:
+            op.transaction_date = d
+        changes.append(f"date → {op.transaction_date.isoformat()}")
+    if "contact" in values and values["contact"]:
+        from apps.femi_account.models import Contact
+        nom = str(values["contact"]).strip()
+        c = Contact.objects.filter(entreprise=entreprise, nom__iexact=nom).first()
+        if c is None:
+            c = Contact.objects.create(entreprise=entreprise, nom=nom)
+        op.contact = c
+        changes.append(f"contact → {c.nom}")
+
+    with transaction.atomic():
+        op.save()
+
+    resume = (
+        "Aucune modification à appliquer (valeurs identiques)."
+        if not changes
+        else "Modification enregistrée : " + " ; ".join(changes) + "."
+    )
+    return {
+        "success": True,
+        "action": "UPDATE",
+        "operation_id": str(op.id),
+        "resume_texte": resume,
+    }
