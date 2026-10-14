@@ -62,6 +62,7 @@ from apps.femi_agent.agent.conversation_manager import (
     resolve_type_message,
 )
 from apps.femi_agent.agent.pending_action import PendingTurn
+from apps.femi_agent.agent.tools.operations import apply_operation_change, list_recent_operations
 from apps.femi_agent.agent.social_replies import (
     build_off_topic_reply,
     build_social_reply,
@@ -251,6 +252,29 @@ class FemiRouterManager:
                 router_output.intents,
                 combined_text,
             )
+
+            early_msg = await sync_to_async(cls._try_handle_modify_confirmation)(
+                pending, combined_text, entreprise
+            )
+            if early_msg is None:
+                early_msg = await sync_to_async(cls._try_handle_list_operations)(
+                    combined_text, entreprise
+                )
+            if early_msg is not None:
+                await sync_to_async(pending.commit)()
+                await cls._arecord_turn(
+                    conversation,
+                    canal,
+                    combined_text,
+                    type_message,
+                    early_msg,
+                )
+                return RouterProcessResult(
+                    success=True,
+                    message=early_msg,
+                    needs_clarification=False,
+                    missing_fields=[],
+                )
 
             pending.start_turn(
                 combined_text,
@@ -486,6 +510,29 @@ class FemiRouterManager:
                 router_output.intents,
                 combined_text,
             )
+
+            early_msg = cls._try_handle_modify_confirmation(
+                pending, combined_text, entreprise
+            )
+            if early_msg is None:
+                early_msg = cls._try_handle_list_operations(
+                    combined_text, entreprise
+                )
+            if early_msg is not None:
+                pending.commit()
+                cls._record_turn(
+                    conversation,
+                    canal,
+                    combined_text,
+                    type_message,
+                    early_msg,
+                )
+                return RouterProcessResult(
+                    success=True,
+                    message=early_msg,
+                    needs_clarification=False,
+                    missing_fields=[],
+                )
 
             pending.start_turn(
                 combined_text,
@@ -1801,6 +1848,79 @@ class FemiRouterManager:
 
         return None
 
+
+    @staticmethod
+    def _is_affirmative(text: str) -> bool:
+        t = (text or "").strip().lower()
+        return t in {
+            "oui", "yes", "ok", "okay", "daccord", "d'accord", "confirme",
+            "je confirme", "valide", "valider", "oui valide", "oui je confirme",
+            "c'est bon", "cest bon", "go", "vas-y", "vas y",
+        }
+
+    @staticmethod
+    def _is_negative(text: str) -> bool:
+        t = (text or "").strip().lower()
+        return t in {
+            "non", "no", "annule", "annuler", "laisse", "laisse tomber",
+            "stop", "cancel", "non merci",
+        }
+
+    @classmethod
+    def _try_handle_modify_confirmation(
+        cls,
+        pending: Optional[PendingTurn],
+        raw_text: str,
+        entreprise,
+    ) -> str | None:
+        """Si pending = proposition UPDATE/DELETE et message = oui/non, applique."""
+        if pending is None or not hasattr(pending, "has_confirmation"):
+            return None
+        if not pending.has_confirmation():
+            return None
+        text = (raw_text or "").strip()
+        if not (cls._is_affirmative(text) or cls._is_negative(text)):
+            return None
+        entry = pending.pop_confirmation()
+        if not entry:
+            return None
+        if cls._is_negative(text):
+            return "D'accord, je n'ai rien modifié."
+        result = apply_operation_change(
+            entreprise,
+            operation_id=entry.get("operation_id"),
+            action_type=entry.get("action_type") or "UPDATE",
+            proposed_values=entry.get("proposed_values") or {},
+        )
+        return result.get("resume_texte") or (
+            "Modification enregistrée."
+            if result.get("success")
+            else "Je n'ai pas pu appliquer la modification."
+        )
+
+    @classmethod
+    def _try_handle_list_operations(cls, raw_text: str, entreprise) -> str | None:
+        """Réponse déterministe pour « liste les opérations »."""
+        import unicodedata
+
+        def _n(s: str) -> str:
+            return "".join(
+                c for c in unicodedata.normalize("NFD", s.lower())
+                if unicodedata.category(c) != "Mn"
+            )
+
+        msg_n = _n(raw_text or "")
+        if not (
+            ("liste" in msg_n and "operation" in msg_n)
+            or ("affiche" in msg_n and "operation" in msg_n)
+            or ("montre" in msg_n and "operation" in msg_n)
+            or msg_n.strip() in {"mes operations", "mes opérations"}
+        ):
+            return None
+        payload = list_recent_operations(entreprise, limit=15)
+        return payload.get("resume_texte")
+
+
     @classmethod
     def _build_clarification_message(
         cls,
@@ -2279,6 +2399,19 @@ class FemiRouterManager:
                 accounting_modify_results.append(
                     result
                 )
+                if (
+                    pending is not None
+                    and isinstance(result, AccountingModifyProposeChangeResult)
+                    and getattr(result, "operation_id", None)
+                ):
+                    pending.store_confirmation(
+                        agent="ACCOUNTING_MODIFY",
+                        action_type=getattr(result, "action_type", "UPDATE") or "UPDATE",
+                        operation_id=str(result.operation_id),
+                        proposed_values=getattr(result, "proposed_values", None),
+                        current_values=getattr(result, "current_values", None),
+                        text="",
+                    )
 
             elif isinstance(result, QuoteExtractionResult):
 
@@ -2980,6 +3113,19 @@ class FemiRouterManager:
                 accounting_modify_results.append(
                     result
                 )
+                if (
+                    pending is not None
+                    and isinstance(result, AccountingModifyProposeChangeResult)
+                    and getattr(result, "operation_id", None)
+                ):
+                    pending.store_confirmation(
+                        agent="ACCOUNTING_MODIFY",
+                        action_type=getattr(result, "action_type", "UPDATE") or "UPDATE",
+                        operation_id=str(result.operation_id),
+                        proposed_values=getattr(result, "proposed_values", None),
+                        current_values=getattr(result, "current_values", None),
+                        text="",
+                    )
 
             elif isinstance(result, QuoteExtractionResult):
 

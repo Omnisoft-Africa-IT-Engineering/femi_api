@@ -105,6 +105,7 @@ class PendingTurn:
 
         self._consumed: set[int] = set()
         self._observed: list[dict] = []
+        self._confirmation_dirty = False
         self._merged_single_text: Optional[str] = None
 
     # ------------------------------------------------------------
@@ -400,6 +401,45 @@ class PendingTurn:
     # Sauvegarde
     # ------------------------------------------------------------
 
+
+    def store_confirmation(
+        self,
+        *,
+        agent: str,
+        action_type: str,
+        operation_id: str,
+        proposed_values: dict | None,
+        current_values: dict | None = None,
+        text: str = "",
+    ) -> None:
+        """Enregistre une proposition UPDATE/DELETE en attente de oui/non."""
+        self._observed.append(
+            {
+                "agent": agent,
+                "action_type": action_type,
+                "text": (text or "")[-PENDING_MAX_TEXT_CHARS:],
+                "missing_fields": ["confirmation"],
+                "from_document": False,
+                "updated_at": _now_iso(),
+                "awaiting_confirmation": True,
+                "operation_id": operation_id,
+                "proposed_values": proposed_values or {},
+                "current_values": current_values or {},
+            }
+        )
+        self._confirmation_dirty = True
+
+    def pop_confirmation(self) -> dict | None:
+        """Retourne et retire la première entrée en attente de confirmation."""
+        for i, e in enumerate(self.entries):
+            if e.get("awaiting_confirmation") and e.get("operation_id"):
+                self._consumed.add(i)
+                return e
+        return None
+
+    def has_confirmation(self) -> bool:
+        return any(e.get("awaiting_confirmation") for e in self.entries)
+
     def commit(self) -> None:
         """Écrit l'état final en base. Ne lève jamais d'exception.
 
@@ -411,7 +451,7 @@ class PendingTurn:
         if self.conversation is None:
             return
 
-        if not self._observed and not self._consumed:
+        if not self._observed and not self._consumed and not getattr(self, '_confirmation_dirty', False):
             return  # rien n'a changé : pas d'écriture inutile
 
         try:
