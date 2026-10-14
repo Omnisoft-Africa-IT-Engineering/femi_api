@@ -22,6 +22,17 @@ logger = logging.getLogger(__name__)
 _CENTIMES = Decimal("0.01")
 
 
+MESSAGE_DEVIS_INTERDIT_EMPLOYE = (
+    "Les devis sont réservés à l'administrateur de l'entreprise."
+)
+
+
+def utilisateur_est_employe(utilisateur) -> bool:
+    """Vrai si l'utilisateur a le rôle EMPLOYE (aucun accès aux devis)."""
+    role = (getattr(utilisateur, "role", None) or "").strip().upper()
+    return role == "EMPLOYE"
+
+
 class DevisInvalideError(ValueError):
     """Données de devis inexploitables (ligne vide, quantité ou prix invalide)."""
 
@@ -108,6 +119,37 @@ def creer_devis(
         "[DevisService] Devis créé : reference=%s entreprise=%s lignes=%s total=%s",
         devis.reference,
         entreprise.id,
+        len(lignes_ok),
+        devis.montant_total,
+    )
+    return devis
+
+
+class DevisNonModifiableError(ValueError):
+    """Le devis n'est plus en brouillon : ses lignes ne peuvent plus changer."""
+
+
+@transaction.atomic
+def ajouter_lignes(devis: Devis, lignes: Iterable) -> Devis:
+    """Ajoute des lignes à un devis BROUILLON et recalcule le total.
+
+    Le devis est verrouillé le temps de la transaction pour que le statut
+    vérifié soit celui qui est réellement en base.
+    """
+    devis = Devis.objects.select_for_update().get(pk=devis.pk)
+    if devis.statut != "BROUILLON":
+        raise DevisNonModifiableError(
+            "Seul un devis en brouillon peut recevoir de nouvelles lignes."
+        )
+    lignes_ok = normaliser_lignes(lignes)
+    LigneDevis.objects.bulk_create(
+        [LigneDevis(devis=devis, **ligne) for ligne in lignes_ok]
+    )
+    devis.calculer_total()
+
+    logger.info(
+        "[DevisService] Lignes ajoutées : reference=%s ajoutées=%s total=%s",
+        devis.reference,
         len(lignes_ok),
         devis.montant_total,
     )

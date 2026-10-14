@@ -10,13 +10,21 @@ import logging
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.femi_account.devis_pdf import generer_pdf_devis
+from apps.femi_account.devis_service import (
+    MESSAGE_DEVIS_INTERDIT_EMPLOYE,
+    DevisInvalideError,
+    DevisNonModifiableError,
+    ajouter_lignes,
+    utilisateur_est_employe,
+)
 from apps.femi_account.models import Contact, Devis
 from apps.femi_api.serializers_devis import (
+    AjoutLignesSerializer,
     DevisCreationSerializer,
     DevisMiseAJourSerializer,
     DevisSerializer,
@@ -30,6 +38,15 @@ _TRANSITIONS = {
     "BROUILLON": {"VALIDE", "ANNULE"},
     "VALIDE": {"ANNULE"},
 }
+
+
+class PasEmploye(BasePermission):
+    """Refuse (403) tout utilisateur au rôle EMPLOYE : les devis lui sont fermés."""
+
+    message = MESSAGE_DEVIS_INTERDIT_EMPLOYE
+
+    def has_permission(self, request, view):
+        return not utilisateur_est_employe(request.user)
 
 
 def _entreprise_ou_erreur(request):
@@ -51,7 +68,7 @@ def _devis_de_l_entreprise(entreprise):
 class DevisListCreateAPIView(APIView):
     """GET : devis de l'entreprise (filtre ?statut=). POST : crée un devis."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, PasEmploye]
 
     def get(self, request):
         entreprise, erreur = _entreprise_ou_erreur(request)
@@ -87,7 +104,7 @@ class DevisListCreateAPIView(APIView):
 class DevisDetailAPIView(APIView):
     """GET : détail. PATCH : statut / date de validité. DELETE : brouillon seulement."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, PasEmploye]
 
     def _get(self, request, pk):
         entreprise, erreur = _entreprise_ou_erreur(request)
@@ -144,10 +161,39 @@ class DevisDetailAPIView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class DevisLignesAPIView(APIView):
+    """POST : ajoute une ou plusieurs lignes à un devis en brouillon.
+
+    Corps : {description, quantite, prix_unitaire} ou {lignes: [...]}.
+    Les montants sont calculés par le backend. Un devis qui n'est plus en
+    brouillon répond 409. Renvoie le devis complet à jour (201).
+    """
+
+    permission_classes = [IsAuthenticated, PasEmploye]
+
+    def post(self, request, pk):
+        entreprise, erreur = _entreprise_ou_erreur(request)
+        if erreur:
+            return erreur
+        devis = get_object_or_404(_devis_de_l_entreprise(entreprise), pk=pk)
+        serializer = AjoutLignesSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            ajouter_lignes(devis, serializer.validated_data["lignes_a_ajouter"])
+        except DevisNonModifiableError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except DevisInvalideError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            DevisSerializer(_devis_de_l_entreprise(entreprise).get(pk=devis.pk)).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
 class DevisPDFAPIView(APIView):
     """GET : télécharge le PDF du devis."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, PasEmploye]
 
     def get(self, request, pk):
         entreprise, erreur = _entreprise_ou_erreur(request)
