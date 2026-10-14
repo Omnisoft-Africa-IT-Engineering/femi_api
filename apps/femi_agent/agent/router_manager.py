@@ -25,7 +25,12 @@ from typing import Optional, Tuple
 
 from asgiref.sync import sync_to_async
 
-from apps.femi_account.devis_service import DevisInvalideError, creer_devis
+from apps.femi_account.devis_service import (
+    MESSAGE_DEVIS_INTERDIT_EMPLOYE,
+    DevisInvalideError,
+    creer_devis,
+    utilisateur_est_employe,
+)
 from apps.femi_account.models import (
     Conversation,
     Entreprise,
@@ -2075,6 +2080,7 @@ class FemiRouterManager:
         ] = []
 
         quote_results: list[QuoteExtractionResult] = []
+        quote_interdit = False
 
         logger.info(
             "[FemiRouterManager] "
@@ -2129,6 +2135,16 @@ class FemiRouterManager:
                 "intent.missing_fields=%s",
                 intent.missing_fields,
             )
+
+            # Un employé n'a pas accès aux devis : on ne lance pas l'agent
+            # QUOTE (donc aucune question de précision) et rien n'est créé.
+            if intent.agent == "QUOTE" and utilisateur_est_employe(utilisateur):
+                logger.info(
+                    "[FemiRouterManager] Intent QUOTE ignoré : "
+                    "utilisateur au rôle EMPLOYE."
+                )
+                quote_interdit = True
+                continue
 
             if intent.needs_clarification:
                 needs_clarification = True
@@ -2546,6 +2562,8 @@ class FemiRouterManager:
         devis_crees, quote_erreurs = cls._persist_quote_results(
             quote_results, entreprise
         )
+        if quote_interdit:
+            quote_erreurs = [MESSAGE_DEVIS_INTERDIT_EMPLOYE] + list(quote_erreurs)
 
         # ========================================================
         # RESULTAT FINAL
@@ -2879,12 +2897,18 @@ class FemiRouterManager:
         ] = []
 
         quote_results: list[QuoteExtractionResult] = []
+        quote_interdit = False
 
         # --------------------------------------------------------
         # Dispatch
         # --------------------------------------------------------
 
         for intent in router_output.intents:
+
+            # Un employé n'a pas accès aux devis : agent QUOTE non lancé.
+            if intent.agent == "QUOTE" and utilisateur_est_employe(utilisateur):
+                quote_interdit = True
+                continue
 
             if intent.needs_clarification:
                 needs_clarification = True
@@ -3032,6 +3056,8 @@ class FemiRouterManager:
         devis_crees, quote_erreurs = await sync_to_async(
             cls._persist_quote_results
         )(quote_results, entreprise)
+        if quote_interdit:
+            quote_erreurs = [MESSAGE_DEVIS_INTERDIT_EMPLOYE] + list(quote_erreurs)
 
         # --------------------------------------------------------
         # RESULTAT FINAL

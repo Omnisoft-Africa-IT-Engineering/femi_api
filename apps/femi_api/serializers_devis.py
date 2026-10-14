@@ -81,3 +81,41 @@ class DevisMiseAJourSerializer(serializers.Serializer):
 
     statut = serializers.ChoiceField(choices=["VALIDE", "ANNULE"], required=False)
     date_validite = serializers.DateField(required=False, allow_null=True)
+
+
+class AjoutLignesSerializer(serializers.Serializer):
+    """Ajout de lignes à un devis brouillon : une ligne seule ou une liste.
+
+    Accepte soit {description, quantite, prix_unitaire}, soit
+    {lignes: [{...}, ...]}.
+    """
+
+    lignes = LigneDevisEntreeSerializer(many=True, required=False, allow_empty=False)
+    description = serializers.CharField(max_length=500, required=False)
+    quantite = serializers.DecimalField(
+        max_digits=10, decimal_places=2, min_value=Decimal("0.01"), default=1
+    )
+    prix_unitaire = serializers.DecimalField(
+        max_digits=14, decimal_places=2, min_value=Decimal("0"), required=False
+    )
+
+    def validate(self, attrs):
+        if attrs.get("lignes"):
+            attrs["lignes_a_ajouter"] = attrs["lignes"]
+            return attrs
+        if not (attrs.get("description") or "").strip():
+            raise serializers.ValidationError(
+                {"description": "Indique la désignation de la ligne."}
+            )
+        if attrs.get("prix_unitaire") is None:
+            raise serializers.ValidationError(
+                {"prix_unitaire": "Indique le prix unitaire de la ligne."}
+            )
+        attrs["lignes_a_ajouter"] = [
+            {
+                "description": attrs["description"],
+                "quantite": attrs["quantite"],
+                "prix_unitaire": attrs["prix_unitaire"],
+            }
+        ]
+        return attrs
