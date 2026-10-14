@@ -16,7 +16,11 @@ Couvre :
   - point 4d : quand check_open_debt/check_open_loan est True, imputation
     FIFO du montant à la/les opération(s) ouverte(s) existante(s)
     plutôt que création d'une ligne indépendante
-    (_impute_to_open_operation).
+    (_traiter_remboursement).
+  - un remboursement n'est JAMAIS enregistré comme une nouvelle recette /
+    dépense : si le contact est introuvable, ambigu, ou s'il n'a aucune
+    créance / aucun prêt ouvert, rien n'est créé et l'utilisateur reçoit
+    une question claire (txn._statut_enregistrement = "remboursement_refuse").
 
   - rattachement automatique de chaque nouvelle Operation à son échéance
     fiscale correspondante.
@@ -29,17 +33,17 @@ par paiement.
 
 import logging
 import re
+import unicodedata
+from decimal import Decimal
+from difflib import get_close_matches
 
 from django.db import transaction
+from django.db.models import F
 
 from apps.femi_account.models import Contact, Operation
 from apps.femi_agent.schemas import (
     AccountingExtractionResult,
     AccountingTransactionSchema,
-)
-from apps.femi_agent.agent.tools import (
-    get_contact_open_debts,
-    get_contact_open_loans,
 )
 from apps.femi_account.fiscal import (
     creer_ou_mettre_a_jour_echeance_tva,
@@ -49,7 +53,7 @@ logger = logging.getLogger(__name__)
 
 
 # LIMITATION CONNUE :
-# quand un remboursement est imputé via _impute_to_open_operation(),
+# quand un remboursement est imputé via _traiter_remboursement(),
 # seul montant_paye est incrémenté sur l'Operation d'origine.
 # Sa transaction_date n'est PAS mise à jour à la date du remboursement.
 #
@@ -106,68 +110,185 @@ def _resolve_contact(
     return contact
 
 
-def _impute_to_open_operation(
-    entreprise,
-    contact,
-    txn: AccountingTransactionSchema,
-) -> Operation | None:
-    """
-    Tente d'imputer txn à l'opération ouverte la plus ancienne (FIFO).
+# ----------------------------------------------------------------------
+# REMBOURSEMENT : IMPUTATION SUR LES OPÉRATIONS OUVERTES
+# ----------------------------------------------------------------------
+#
+# Cibles d'un remboursement (même définition de « ouvert » que
+# apps.femi_account.soldes_ouverts : amount_ttc > montant_paye) :
+#   - check_open_debt=true + txn RECETTE        -> RECETTE   (créance client)
+#   - check_open_debt=true + txn DEPENSE        -> DEPENSE   (dette fournisseur)
+#   - check_open_loan=true + txn RECETTE        -> PRET_DONNE (prêt qu'on a accordé)
+#   - check_open_loan=true + txn DEPENSE        -> PRET_RECU  (prêt qu'on a reçu)
+#
+# Un remboursement ne crée jamais de nouvelle Operation et jamais de contact.
+# Si on ne peut pas l'imputer, on le dit à l'utilisateur (voir
+# FemiRouterManager._message_remboursement_refuse) au lieu de compter le
+# paiement une deuxième fois.
 
-    Doit être appelée à l'intérieur d'un bloc transaction.atomic().
-    """
+_LIMITE_CANDIDATS = 5
+_SEUIL_NOM_PROCHE = 0.75
 
+
+def _normaliser_nom(nom):
+    """Minuscules, sans accents, espaces simplifiés (« Kôffi  » == « koffi »)."""
+    texte = unicodedata.normalize("NFKD", nom or "")
+    texte = "".join(c for c in texte if not unicodedata.combining(c))
+    return " ".join(texte.lower().split())
+
+
+def _type_operation_cible(txn):
     if txn.check_open_debt:
-        resultat = get_contact_open_debts(
-            entreprise,
-            contact,
-        )
-    else:
-        resultat = get_contact_open_loans(
-            entreprise,
-            contact,
-        )
+        return "DEPENSE" if txn.transaction_type == "DEPENSE" else "RECETTE"
+    if txn.transaction_type == "DEPENSE":
+        return "PRET_RECU"
+    return "PRET_DONNE"
 
-    operations_ouvertes = resultat["operations"]
 
-    if not operations_ouvertes:
+def _qs_operations_ouvertes(entreprise, type_cible):
+    return Operation.objects.filter(
+        entreprise=entreprise,
+        transaction_type=type_cible,
+        amount_ttc__gt=F("montant_paye"),
+    )
+
+
+def _contact_a_solde_ouvert(entreprise, contact, type_cible):
+    return (
+        _qs_operations_ouvertes(entreprise, type_cible)
+        .filter(contact=contact)
+        .exists()
+    )
+
+
+def _noms_avec_solde_ouvert(entreprise, type_cible):
+    """Noms (au plus 5) des contacts qui ont encore un solde ouvert."""
+    noms = (
+        _qs_operations_ouvertes(entreprise, type_cible)
+        .filter(contact__isnull=False)
+        .order_by("contact__nom")
+        .values_list("contact__nom", flat=True)
+        .distinct()
+    )
+    return list(noms[:_LIMITE_CANDIDATS])
+
+
+def _libelle_contact(contact):
+    """Nom + 4 derniers chiffres du téléphone, pour départager des homonymes."""
+    telephone = (contact.telephone or "").strip()
+    if len(telephone) >= 4:
+        return f"{contact.nom} (tél. …{telephone[-4:]})"
+    return contact.nom
+
+
+def _departager(entreprise, candidats, type_cible):
+    """(contact, propositions) parmi des contacts de même nom.
+
+    Un seul candidat, ou un seul candidat avec un solde ouvert : on le prend.
+    Aucun candidat avec un solde ouvert : (None, []), il n'y a rien à imputer.
+    Plusieurs avec un solde : (None, libellés) pour demander lequel.
+    """
+    if len(candidats) == 1:
+        return candidats[0], []
+    avec_solde = [
+        c for c in candidats
+        if _contact_a_solde_ouvert(entreprise, c, type_cible)
+    ]
+    if len(avec_solde) == 1:
+        return avec_solde[0], []
+    return None, [_libelle_contact(c) for c in avec_solde[:_LIMITE_CANDIDATS]]
+
+
+def _resoudre_contact_remboursement(entreprise, nom, type_cible):
+    """Retourne (contact, raison, propositions). Ne crée JAMAIS de contact.
+
+    raison : None (trouvé), "sans_nom", "ambigu", "aucune_dette" (homonymes
+    sans aucun solde ouvert), "proche" ou "inconnu".
+    Seules les correspondances exactes (casse, accents et espaces ignorés)
+    sont acceptées automatiquement : un nom simplement ressemblant
+    (« Kofi » pour « Koffi ») est proposé, jamais imputé d'office, car
+    imputer un paiement sur la mauvaise personne fausse ses comptes.
+    """
+    nom = (nom or "").strip()
+    if not nom:
+        return None, "sans_nom", []
+
+    contacts = list(
+        Contact.objects.filter(entreprise=entreprise).order_by("nom")
+    )
+    cible = _normaliser_nom(nom)
+
+    exacts = [c for c in contacts if c.nom.strip().lower() == nom.lower()]
+    memes = exacts or [
+        c for c in contacts if _normaliser_nom(c.nom) == cible
+    ]
+    if memes:
+        contact, propositions = _departager(entreprise, memes, type_cible)
+        if contact is not None:
+            return contact, None, []
+        if not propositions:
+            return None, "aucune_dette", []
+        return None, "ambigu", propositions
+
+    mots_cible = set(cible.split())
+    noms_normalises = [_normaliser_nom(c.nom) for c in contacts]
+    proches_normalises = set(
+        get_close_matches(
+            cible, noms_normalises, n=3, cutoff=_SEUIL_NOM_PROCHE
+        )
+    )
+    propositions = []
+    for contact, normalise in zip(contacts, noms_normalises):
+        mots = set(normalise.split())
+        ressemble = normalise in proches_normalises or (
+            bool(mots_cible)
+            and bool(mots)
+            and (mots_cible <= mots or mots <= mots_cible)
+        )
+        if ressemble and contact.nom not in propositions:
+            propositions.append(contact.nom)
+    if propositions:
+        return None, "proche", propositions[:3]
+
+    return None, "inconnu", []
+
+
+def _imputer_remboursement(entreprise, contact, txn, type_cible):
+    """Impute txn.amount_ttc sur les opérations ouvertes du contact (FIFO).
+
+    Doit être appelée dans un bloc transaction.atomic().
+    Retourne None s'il n'y a aucune opération ouverte, sinon un dict :
+    derniere (Operation), montant_impute, surplus, reste_du, soldees,
+    nb_operations.
+    """
+    operations = list(
+        _qs_operations_ouvertes(entreprise, type_cible)
+        .filter(contact=contact)
+        .select_for_update()
+        .order_by("transaction_date", "created_at")
+    )
+    if not operations:
         return None
 
-    montant_restant = txn.amount_ttc
-    derniere_operation_maj = None
+    restant = txn.amount_ttc
+    montant_impute = Decimal("0")
+    soldees = 0
+    nb_operations = 0
+    derniere = None
 
-    for op_info in operations_ouvertes:
-
-        if montant_restant <= 0:
+    for operation in operations:
+        if restant <= 0:
             break
 
-        operation = (
-            Operation.objects
-            .select_for_update()
-            .get(id=op_info["operation_id"])
-        )
-
-        solde = (
-            operation.amount_ttc
-            - operation.montant_paye
-        )
-
-        imputation = min(
-            montant_restant,
-            solde,
-        )
+        solde = operation.amount_ttc - operation.montant_paye
+        imputation = min(restant, solde)
 
         operation.montant_paye += imputation
-
         if operation.montant_paye >= operation.amount_ttc:
             operation.statut_paiement = "PAYE"
+            soldees += 1
 
-        operation.save(
-            update_fields=[
-                "montant_paye",
-                "statut_paiement",
-            ]
-        )
+        operation.save(update_fields=["montant_paye", "statut_paiement"])
 
         logger.info(
             "[AccountingManager] Imputation : "
@@ -179,20 +300,98 @@ def _impute_to_open_operation(
             operation.statut_paiement,
         )
 
-        montant_restant -= imputation
-        derniere_operation_maj = operation
+        restant -= imputation
+        montant_impute += imputation
+        nb_operations += 1
+        derniere = operation
 
-    if montant_restant > 0:
+    reste_du = sum(
+        (o.amount_ttc - o.montant_paye for o in operations),
+        Decimal("0"),
+    )
+
+    return {
+        "derniere": derniere,
+        "montant_impute": montant_impute,
+        "surplus": restant if restant > 0 else Decimal("0"),
+        "reste_du": reste_du,
+        "soldees": soldees,
+        "nb_operations": nb_operations,
+    }
+
+
+def _traiter_remboursement(entreprise, txn):
+    """Impute un remboursement ou le refuse proprement. Operation | None.
+
+    Succès : retourne la dernière Operation mise à jour et renseigne
+    txn._statut_enregistrement = "remboursement".
+    Refus : ne crée ni opération ni contact, retourne None et renseigne
+    txn._statut_enregistrement = "remboursement_refuse" avec
+    detail["raison"] parmi : montant, sans_nom, inconnu, proche, ambigu,
+    aucune_dette. Le message utilisateur est écrit par FemiRouterManager.
+    """
+    type_cible = _type_operation_cible(txn)
+    detail = {
+        "type_cible": type_cible,
+        "currency": txn.currency,
+        "montant_recu": txn.amount_ttc,
+        "nom_saisi": txn.contact,
+    }
+
+    def refuser(raison, **extra):
+        detail["raison"] = raison
+        detail.update(extra)
+        txn._statut_enregistrement = "remboursement_refuse"
+        txn._detail_enregistrement = detail
         logger.warning(
-            "[AccountingManager] Remboursement partiellement imputé : "
-            "reliquat=%s non couvert par les opérations ouvertes "
-            "de contact_id=%s (montant total=%s)",
-            montant_restant,
+            "[AccountingManager] Remboursement refusé (aucune opération "
+            "créée) : raison=%s type_cible=%s nom=%r montant=%s",
+            raison,
+            type_cible,
+            txn.contact,
+            txn.amount_ttc,
+        )
+        return None
+
+    if not txn.amount_ttc or txn.amount_ttc <= 0:
+        return refuser("montant")
+
+    contact, raison, propositions = _resoudre_contact_remboursement(
+        entreprise, txn.contact, type_cible
+    )
+    if contact is None:
+        extra = {"propositions": propositions}
+        if raison in ("sans_nom", "inconnu"):
+            extra["candidats"] = _noms_avec_solde_ouvert(
+                entreprise, type_cible
+            )
+        return refuser(raison, **extra)
+
+    resultat = _imputer_remboursement(entreprise, contact, txn, type_cible)
+    if resultat is None:
+        return refuser("aucune_dette", contact=contact.nom)
+
+    detail.update(
+        contact=contact.nom,
+        montant_impute=resultat["montant_impute"],
+        surplus=resultat["surplus"],
+        reste_du=resultat["reste_du"],
+        soldees=resultat["soldees"],
+        nb_operations=resultat["nb_operations"],
+    )
+    txn._statut_enregistrement = "remboursement"
+    txn._detail_enregistrement = detail
+
+    if resultat["surplus"] > 0:
+        logger.warning(
+            "[AccountingManager] Remboursement supérieur au solde : "
+            "surplus=%s non enregistré (contact_id=%s, montant total=%s)",
+            resultat["surplus"],
             contact.id,
             txn.amount_ttc,
         )
 
-    return derniere_operation_maj
+    return resultat["derniere"]
 
 
 def _resolve_paiement(txn):
@@ -355,13 +554,14 @@ def _save_single_transaction(
     txn: AccountingTransactionSchema,
     source,
     raw_text,
-) -> Operation:
+) -> Operation | None:
     """
     Persiste UNE transaction.
 
-    Si check_open_debt ou check_open_loan est True ET qu'une opération
-    ouverte existe pour ce contact, le montant est imputé à cette
-    opération plutôt que de créer une nouvelle ligne.
+    Si check_open_debt ou check_open_loan est True, le montant est imputé
+    sur les opérations ouvertes du contact (FIFO). Si ce n'est pas possible,
+    RIEN n'est créé et None est retourné (txn._statut_enregistrement =
+    "remboursement_refuse", raison dans txn._detail_enregistrement).
 
     Sinon, une nouvelle Operation est créée.
 
@@ -378,28 +578,20 @@ def _save_single_transaction(
     if operation_existante is not None:
         return operation_existante
 
+    # ---------------------------------------------------------
+    # REMBOURSEMENT : imputation sur l'opération ouverte, sinon refus
+    # ---------------------------------------------------------
+    # Un remboursement ne crée JAMAIS de nouvelle ligne (sinon le chiffre
+    # d'affaires ou les dépenses seraient comptés deux fois et la dette
+    # d'origine resterait ouverte). Il ne crée pas non plus de contact.
+
+    if txn.check_open_debt or txn.check_open_loan:
+        return _traiter_remboursement(entreprise, txn)
+
     contact = _resolve_contact(
         entreprise,
         txn.contact,
     )
-
-    # ---------------------------------------------------------
-    # REMBOURSEMENT / IMPUTATION D'UNE OPÉRATION EXISTANTE
-    # ---------------------------------------------------------
-
-    if (
-        txn.check_open_debt
-        or txn.check_open_loan
-    ) and contact is not None:
-
-        operation_imputee = _impute_to_open_operation(
-            entreprise,
-            contact,
-            txn,
-        )
-
-        if operation_imputee is not None:
-            return operation_imputee
 
     # ---------------------------------------------------------
     # CRÉATION DE L'OPÉRATION
@@ -533,7 +725,10 @@ def save_accounting_transactions(
                 raw_text,
             )
 
-            operations.append(operation)
+            # None = remboursement refusé (rien à créer) : le message à
+            # l'utilisateur vient de txn._statut_enregistrement.
+            if operation is not None:
+                operations.append(operation)
 
     return operations
 

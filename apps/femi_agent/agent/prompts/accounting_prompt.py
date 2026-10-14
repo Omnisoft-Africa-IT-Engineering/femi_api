@@ -31,6 +31,8 @@ Règles :
    - Contact rembourse un prêt donné → RECETTE + check_open_loan=true + PAYE
    - Entreprise rembourse un prêt reçu → DEPENSE + check_open_loan=true + PAYE
    - Client règle une dette de vente → RECETTE + check_open_debt=true + PAYE
+   - Entreprise règle une dette fournisseur (achat pris à crédit, « ce que je devais à X ») → DEPENSE + check_open_debt=true + PAYE
+   - check_open_debt=true UNIQUEMENT si le message parle d'une dette / d'un crédit / d'une facture déjà existante à solder. Une vente ou un achat payé tout de suite → check_open_debt=false
 
 3. Nouvelle vente à crédit → RECETTE + CREDIT + check_open_debt=false
 4. Quantité × prix : laisse amount_ttc=null si quantity + unit_price présents. Ne multiplie JAMAIS.
@@ -76,6 +78,15 @@ Message fusionné : "j'ai vendu une chemise\\nà crédit à Koffi pour 10000"
 
 Message : "Koffi m'a remboursé les 30 000 que je lui avais prêtés"
 → RECETTE, check_open_loan=true, statut=PAYE
+
+Message : "Koffi a payé 20 000 sur sa dette"
+→ RECETTE, contact=Koffi, amount_ttc=20000, statut=PAYE, check_open_debt=true
+
+Message : "j'ai réglé 40 000 de ma dette chez Boutique Mawuli"
+→ DEPENSE, contact=Boutique Mawuli, amount_ttc=40000, statut=PAYE, check_open_debt=true
+
+Message : "j'ai acheté du riz à 15 000 chez Mawuli, payé"
+→ DEPENSE, contact=Mawuli, amount_ttc=15000, statut=PAYE, check_open_debt=false
 
 ### RAPPEL
 Mémoire d'abord : ne jamais re-demander ce qui est déjà dans le texte.
