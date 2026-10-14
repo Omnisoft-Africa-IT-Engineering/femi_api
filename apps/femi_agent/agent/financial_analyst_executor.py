@@ -19,10 +19,20 @@ tool avec uniquement les params renvoyés par le LLM.
 import logging
 from functools import partial
 
+from apps.femi_agent.agent.financial_analyst_rules import (
+    PERIODE_PAR_DEFAUT,
+    TOOLS_INDICATEURS,
+    analyser_periode,
+    indicateur_unique,
+)
 from apps.femi_agent.agent.prompts.financial_analyst_prompt import FINANCIAL_ANALYST_PROMPT
 from apps.femi_agent.agent.tool_loop_executor import ToolLoopExecutionError, ToolLoopExecutor
 from apps.femi_agent.agent.tools import financials
-from apps.femi_agent.schemas.tool_loop import FinalAnswerOutput, ToolSelectionOutput
+from apps.femi_agent.schemas.tool_loop import (
+    FinalAnswerOutput,
+    ToolCallSchema,
+    ToolSelectionOutput,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +61,10 @@ _TOOL_NAMES = (
 )
 
 
+# Codes de clarification que le LLM a raison de lever : on ne les écrase jamais.
+_CODES_A_RESPECTER = {"wrong_agent", "fonctionnalite_non_disponible"}
+
+
 class FinancialAnalystExecutionError(ToolLoopExecutionError):
     """Exception personnalisée encapsulant les échecs d'exécution de l'agent FINANCIAL_ANALYST."""
     pass
@@ -73,6 +87,77 @@ class FinancialAnalystExecutor:
         """Lie entreprise à chaque tool de tools/financials.py via functools.partial."""
         return {name: partial(getattr(financials, name), entreprise) for name in _TOOL_NAMES}
 
+    @staticmethod
+    def _corriger_selection(
+        selection: ToolSelectionOutput,
+        message_text: str,
+        tool_registry: dict,
+    ) -> ToolSelectionOutput:
+        """Garde déterministe appliqué à la sélection de tools du LLM.
+
+        1. Un seul indicateur simple (CA, dépenses, bénéfice, marge) nommé
+           dans le message : on appelle directement le bon tool, avec la
+           période lue dans le texte ou « ce_mois » par défaut. Plus de
+           question de période, plus de bénéfice à la place du CA.
+        2. Aucun tool et aucune clarification : on ne laisse pas le LLM
+           écrire une question en « réponse finale » (elle ne serait pas
+           mémorisée pour le message suivant). On force le tool évident
+           (bilan) ou on lève une vraie clarification, mémorisée.
+        """
+        codes = {str(c).lower() for c in (selection.missing_fields or [])}
+        if codes & _CODES_A_RESPECTER:
+            return selection
+
+        tool = indicateur_unique(message_text)
+        periode, periode_non_geree = analyser_periode(message_text)
+
+        if tool and tool in tool_registry and not periode_non_geree:
+            choisis = {c.tool for c in selection.tool_calls}
+            incoherent = bool(choisis) and choisis <= TOOLS_INDICATEURS and tool not in choisis
+            if not choisis or incoherent or selection.needs_clarification:
+                logger.warning(
+                    "[FinancialAnalystExecutor] garde: tool=%s periode=%s "
+                    "(LLM: tools=%s clarification=%s missing=%s)",
+                    tool,
+                    periode or PERIODE_PAR_DEFAUT,
+                    sorted(choisis),
+                    selection.needs_clarification,
+                    selection.missing_fields,
+                )
+                return ToolSelectionOutput(
+                    step="tool_selection",
+                    tool_calls=[
+                        ToolCallSchema(
+                            tool=tool,
+                            params={"periode": periode or PERIODE_PAR_DEFAUT},
+                        )
+                    ],
+                    needs_clarification=False,
+                    missing_fields=[],
+                )
+            return selection
+
+        if selection.tool_calls or selection.needs_clarification:
+            return selection
+
+        forced = ToolLoopExecutor._force_customer_tools_if_empty(
+            selection, message_text, tool_registry, "FinancialAnalystExecutor"
+        )
+        if forced.tool_calls:
+            return forced
+
+        logger.warning(
+            "[FinancialAnalystExecutor] garde: aucun tool ni clarification "
+            "-> clarification mémorisable (message=%r)",
+            (message_text or "")[:80],
+        )
+        return ToolSelectionOutput(
+            step="tool_selection",
+            tool_calls=[],
+            needs_clarification=True,
+            missing_fields=["date_range_incomplete" if tool else "indicateur"],
+        )
+
     @classmethod
     def execute(
         cls,
@@ -93,7 +178,17 @@ class FinancialAnalystExecutor:
         """
         prompt_text = cls._build_prompt_text(annees_disponibles or DEFAULT_ANNEES_DISPONIBLES)
         tool_registry = cls._build_tool_registry(entreprise)
-        return ToolLoopExecutor.execute(
+        selection = ToolLoopExecutor._select_tools(
+            prompt_text=prompt_text,
+            message_text=message_text,
+            num_ctx=FINANCIAL_ANALYST_NUM_CTX,
+            log_prefix="FinancialAnalystExecutor",
+        )
+        selection = cls._corriger_selection(selection, message_text, tool_registry)
+        if selection.needs_clarification:
+            return selection
+        return ToolLoopExecutor.resolve(
+            selection=selection,
             prompt_text=prompt_text,
             message_text=message_text,
             tool_registry=tool_registry,
@@ -111,7 +206,17 @@ class FinancialAnalystExecutor:
         """Exécution asynchrone de l'agent FINANCIAL_ANALYST (mêmes arguments que execute())."""
         prompt_text = cls._build_prompt_text(annees_disponibles or DEFAULT_ANNEES_DISPONIBLES)
         tool_registry = cls._build_tool_registry(entreprise)
-        return await ToolLoopExecutor.aexecute(
+        selection = await ToolLoopExecutor._aselect_tools(
+            prompt_text=prompt_text,
+            message_text=message_text,
+            num_ctx=FINANCIAL_ANALYST_NUM_CTX,
+            log_prefix="FinancialAnalystExecutor",
+        )
+        selection = cls._corriger_selection(selection, message_text, tool_registry)
+        if selection.needs_clarification:
+            return selection
+        return await ToolLoopExecutor.aresolve(
+            selection=selection,
             prompt_text=prompt_text,
             message_text=message_text,
             tool_registry=tool_registry,

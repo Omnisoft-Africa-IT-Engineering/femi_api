@@ -75,6 +75,10 @@ Produis maintenant UNIQUEMENT la réponse finale :
 
 La demande a déjà été routée vers cet agent : ne signale pas de mauvais
 routage.
+
+Style de la réponse : tutoie l'utilisateur ; n'écris jamais les mots
+« tools », « outils » ni « résultats des outils » ; si un montant vaut 0 ou
+si une donnée manque, dis-le simplement pour la période concernée.
 """
 
 LOG_TEXT_PREVIEW_LEN = 80
@@ -424,7 +428,7 @@ class ToolLoopExecutor:
         params: dict = {}
         if tool_name == "get_bilan":
             if any(k in msg for k in ("aujourd", "ce jour", "today")):
-                params["periode"] = "aujourd_hui"
+                params["periode"] = "aujourd'hui"
             elif any(k in msg for k in ("semaine",)):
                 params["periode"] = "cette_semaine"
             elif any(k in msg for k in ("annee", "année")):
