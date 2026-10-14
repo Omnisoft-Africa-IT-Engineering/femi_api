@@ -50,7 +50,7 @@ import logging
 from typing import Callable
 
 from apps.femi_agent.agent.base_executor import BaseAgentExecutionError, StructuredLLMExecutor
-from apps.femi_agent.schemas.tool_loop import FinalAnswerOutput, ToolSelectionOutput
+from apps.femi_agent.schemas.tool_loop import FinalAnswerOutput, ToolCallSchema, ToolSelectionOutput
 
 logger = logging.getLogger(__name__)
 
@@ -255,7 +255,15 @@ class ToolLoopExecutor:
         Returns:
             FinalAnswerOutput.
         """
+        selection = ToolLoopExecutor._force_customer_tools_if_empty(
+            selection, message_text, tool_registry, log_prefix
+        )
+
         tool_results = ToolLoopExecutor._run_tools(selection, tool_registry, log_prefix)
+
+        deterministic = ToolLoopExecutor._answer_from_resume_texte(tool_results)
+        if deterministic is not None:
+            return deterministic
 
         final_prompt = (
             prompt_text.replace("{tool_results}", json.dumps(tool_results, ensure_ascii=False))
@@ -281,7 +289,15 @@ class ToolLoopExecutor:
         log_prefix: str = "ToolLoopExecutor",
     ) -> FinalAnswerOutput:
         """Version asynchrone de resolve()."""
+        selection = ToolLoopExecutor._force_customer_tools_if_empty(
+            selection, message_text, tool_registry, log_prefix
+        )
+
         tool_results = ToolLoopExecutor._run_tools(selection, tool_registry, log_prefix)
+
+        deterministic = ToolLoopExecutor._answer_from_resume_texte(tool_results)
+        if deterministic is not None:
+            return deterministic
 
         final_prompt = (
             prompt_text.replace("{tool_results}", json.dumps(tool_results, ensure_ascii=False))
@@ -296,6 +312,165 @@ class ToolLoopExecutor:
             error_cls=ToolLoopExecutionError,
             log_prefix=f"{log_prefix}/final_answer",
         )
+
+
+
+    @staticmethod
+    def _force_customer_tools_if_empty(
+        selection: ToolSelectionOutput,
+        message_text: str,
+        tool_registry: dict,
+        log_prefix: str,
+    ) -> ToolSelectionOutput:
+        """Si le LLM n'a sélectionné aucun tool (fréquent avec Gemini lite),
+        force le bon tool à partir du message pour les consultations créances /
+        dettes / prêts / impayés. Évite les réponses vides du type
+        « Voici la liste… » sans données.
+        """
+        if selection.tool_calls or selection.needs_clarification:
+            return selection
+        if not message_text:
+            return selection
+
+        msg = message_text.lower()
+        # Normalisation légère
+        for a, b in (
+            ("é", "e"), ("è", "e"), ("ê", "e"), ("à", "a"), ("â", "a"),
+            ("ù", "u"), ("ô", "o"), ("î", "i"), ("ç", "c"),
+        ):
+            msg = msg.replace(a, b)
+
+        tool_name = None
+        # Ordre : formulations les plus spécifiques d'abord
+        if any(
+            k in msg
+            for k in (
+                "impaye",
+                "impayes",
+                "facture impaye",
+                "factures impaye",
+                "retard de paiement",
+                "retards de paiement",
+                "qui n'a pas paye",
+                "qui na pas paye",
+            )
+        ):
+            tool_name = "get_impayes"
+        elif any(
+            k in msg
+            for k in (
+                "a qui je dois",
+                "creancier",
+                "creanciers",
+                "fournisseur",
+                "fournisseurs",
+                "dettes fournisseur",
+                "mes dettes",
+            )
+        ):
+            tool_name = "get_all_open_payables"
+        elif any(
+            k in msg
+            for k in (
+                "pret",
+                "prets",
+                "mes prets",
+                "prets en cours",
+            )
+        ):
+            tool_name = "get_all_open_loans"
+        elif any(
+            k in msg
+            for k in (
+                "qui me doit",
+                "me doit",
+                "creance",
+                "creances",
+                "debiteur",
+                "debiteurs",
+                "qui doit me",
+                "mes clients",
+            )
+        ):
+            tool_name = "get_all_open_debts"
+        elif any(
+            k in msg
+            for k in (
+                "bilan",
+                "synthese",
+                "synthese financiere",
+                "point financier",
+                "resume financier",
+            )
+        ):
+            tool_name = "get_bilan"
+
+        if tool_name is None:
+            return selection
+        if tool_name not in tool_registry:
+            logger.warning(
+                "[%s] Tool force '%s' absent du registry — ignoré.",
+                log_prefix,
+                tool_name,
+            )
+            return selection
+
+        logger.warning(
+            "[%s] LLM sans tool_calls — force %s pour message=%r",
+            log_prefix,
+            tool_name,
+            message_text[:80],
+        )
+        params: dict = {}
+        if tool_name == "get_bilan":
+            if any(k in msg for k in ("aujourd", "ce jour", "today")):
+                params["periode"] = "aujourd_hui"
+            elif any(k in msg for k in ("semaine",)):
+                params["periode"] = "cette_semaine"
+            elif any(k in msg for k in ("annee", "année")):
+                params["periode"] = "cette_annee"
+            else:
+                params["periode"] = "ce_mois"
+
+        return ToolSelectionOutput(
+            step="tool_selection",
+            tool_calls=[ToolCallSchema(tool=tool_name, params=params)],
+            needs_clarification=False,
+            missing_fields=[],
+        )
+
+    @staticmethod
+    def _answer_from_resume_texte(tool_results: dict) -> FinalAnswerOutput | None:
+        """Si un tool a fourni resume_texte (créances, dettes, prêts, impayés),
+        on l'utilise tel quel — pas de reformulation LLM (évite les
+        hallucinations type Jean/Marie inventés)."""
+        for tool_name, result in (tool_results or {}).items():
+            if not isinstance(result, dict):
+                continue
+            resume = result.get("resume_texte")
+            if not resume or not str(resume).strip():
+                continue
+            key_figures: dict = {}
+            for key in (
+                "total_general",
+                "total_en_retard",
+                "total_a_recevoir",
+                "total_a_rembourser",
+                "total_du",
+                "total_restant",
+            ):
+                if key in result and result[key] is not None:
+                    key_figures[key] = result[key]
+            logger.info(
+                "[ToolLoopExecutor] final_answer déterministe via resume_texte (tool=%s)",
+                tool_name,
+            )
+            return FinalAnswerOutput(
+                step="final_answer",
+                answer=str(resume).strip(),
+                key_figures=key_figures,
+            )
+        return None
 
     @staticmethod
     def _run_tools(

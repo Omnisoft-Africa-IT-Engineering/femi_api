@@ -98,7 +98,11 @@ _REPLY_TYPE_HINTS = {
         "chiffres exacts des FAITS, explique simplement qu'ils ne "
         "correspondent pas, et demande lequel est le bon. "
         "N'enregistre rien et ne choisis jamais un chiffre à la place de "
-        "l'utilisateur."
+        "l'utilisateur. "
+        "Si le message utilisateur est un nom de personne (Mr Hola, Koffi…), "
+        "c'est le CLIENT d'un devis ou d'une opération, PAS ton interlocuteur : "
+        "interdit de le saluer (pas de « Salut Mr X »). Dis « Client noté : … » "
+        "puis pose ta question."
     ),
     "modify_propose": (
         "Propose la modification/suppression et demande confirmation "
