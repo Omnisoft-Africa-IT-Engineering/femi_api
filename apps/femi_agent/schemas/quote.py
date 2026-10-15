@@ -12,6 +12,7 @@ peut donc pas déclarer « complet » un devis sans client, sans ligne ou avec
 un prix manquant.
 """
 
+import re
 from decimal import Decimal
 from typing import List, Optional
 
@@ -72,9 +73,26 @@ class QuoteExtractionResult(BaseModel):
     confidence: ConfidenceEnum = ConfidenceEnum.MEDIUM
 
     @classmethod
-    def from_llm_result(cls, llm_result: QuoteExtractionLLMResult) -> "QuoteExtractionResult":
-        """Convertit float -> Decimal et recalcule les champs manquants."""
+    def from_llm_result(
+        cls,
+        llm_result: QuoteExtractionLLMResult,
+        source_text: str | None = None,
+    ) -> "QuoteExtractionResult":
+        """Convertit float -> Decimal et recalcule les champs manquants.
+
+        Si client_nom n'apparaît pas dans source_text → ignoré (anti-hallucination).
+        """
         client = (llm_result.client_nom or "").strip() or None
+        if client and source_text:
+            src = source_text.casefold()
+            tokens = [
+                t for t in re.split(r"[\s,;]+", client.casefold())
+                if len(t) >= 2 and t not in {"mr", "mme", "mlle", "m.", "me"}
+            ]
+            if tokens and not all(t in src for t in tokens):
+                client = None
+            elif not tokens and client.casefold() not in src:
+                client = None
 
         lignes: list[LigneDevisSchema] = []
         for ligne in llm_result.lignes:

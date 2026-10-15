@@ -53,8 +53,22 @@ def resolve_periode(periode, date_debut=None, date_fin=None, now=None):
         annee = int(periode)
         return date(annee, 1, 1), date(annee, 12, 31)
     
+    _ALIASES = {
+        "dernier": None,
+        "derniere": None,
+        "dernière": None,
+        "last": None,
+    }
+    if isinstance(periode, str):
+        for k, v in _ALIASES.items():
+            if k.casefold() == periode.casefold():
+                periode = v
+                break
+        if periode is None:
+            return None, None
+
     if periode not in PERIODES_VALIDES:
-        raise ValueError(f"periode inconnue : {periode!r}")
+        return None, None
 
     if periode == "aujourd'hui":
         return today, today

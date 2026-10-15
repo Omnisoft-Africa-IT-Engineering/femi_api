@@ -269,6 +269,7 @@ class FemiRouterManager:
             pending = await sync_to_async(PendingTurn.load)(
                 conversation
             )
+            pending._history_text = history_text
 
             router_output = await RouterExecutor.aexecute(
                 combined_text,
@@ -527,6 +528,7 @@ class FemiRouterManager:
 
             # Actions en attente de clarification (best-effort)
             pending = PendingTurn.load(conversation)
+            pending._history_text = history_text
 
             router_output = RouterExecutor.execute(
                 combined_text,
@@ -919,12 +921,14 @@ class FemiRouterManager:
         entreprise: Entreprise,
         from_document: bool = False,
         segment: Optional[str] = None,
+        history_text: Optional[str] = None,
     ) -> Tuple[DispatchResult, bool]:
         return dispatch_intent(
             intent,
             entreprise,
             from_document=from_document,
             segment=segment,
+            history_text=history_text,
         )
     # ============================================================
     # DISPATCH ASYNCHRONE
@@ -937,12 +941,14 @@ class FemiRouterManager:
         entreprise: Entreprise,
         from_document: bool = False,
         segment: Optional[str] = None,
+        history_text: Optional[str] = None,
     ) -> Tuple[DispatchResult, bool]:
         return await adispatch_intent(
             intent,
             entreprise,
             from_document=from_document,
             segment=segment,
+            history_text=history_text,
         )
 
     # ============================================================
@@ -1748,11 +1754,12 @@ class FemiRouterManager:
 
                 result, dispatch_needs_clarification = (
                     cls._dispatch_intent(
-                        intent,
-                        entreprise,
-                        from_document=doc_flag,
-                        segment=segment,
-                    )
+                    intent,
+                    entreprise,
+                    from_document=doc_flag,
+                    segment=segment,
+                    history_text=getattr(pending, "_history_text", None),
+                )
                 )
 
                 if pending is not None:
@@ -2525,6 +2532,7 @@ class FemiRouterManager:
                     entreprise,
                     from_document=doc_flag,
                     segment=segment,
+                    history_text=getattr(pending, "_history_text", None),
                 )
             )
 
