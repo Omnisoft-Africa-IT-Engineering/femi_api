@@ -3,7 +3,7 @@ import re
 from decimal import Decimal
 from typing import Optional, Tuple
 
-from apps.femi_agent.agent.executor import (
+from apps.femi_agent.agent.legacy.executor import (
     analyze_accounting_text,
     aanalyze_accounting_text,
     AgentExecutionError,

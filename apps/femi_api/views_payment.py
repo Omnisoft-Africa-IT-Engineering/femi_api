@@ -27,8 +27,8 @@ from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
 
-from .models import Abonnement
-from .integrations.fedapay_payment import get_transaction_status
+from ..femi_account.models import Abonnement
+from ..femi_account.integrations.fedapay_payment import get_transaction_status
 
 logger = logging.getLogger(__name__)
 

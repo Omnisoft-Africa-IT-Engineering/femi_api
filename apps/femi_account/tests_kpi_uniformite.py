@@ -26,7 +26,7 @@ from django.utils import timezone
 from rest_framework.test import APITestCase
 
 from apps.femi_account import kpi_service as kpi
-from apps.femi_account.kpi_views import avec_variation
+from apps.femi_api.kpi_views import avec_variation
 from apps.femi_account.models import Entreprise, Operation, Utilisateur
 from apps.femi_agent.agent.tools import financials as chat
 from apps.femi_agent.agent.tools.debts import get_all_open_debts, get_all_open_payables

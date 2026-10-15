@@ -38,7 +38,7 @@ urlpatterns = [
     path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
 
     # 🔑 Authentification & Comptes utilisateurs
-    path('api/auth/', include('apps.femi_account.urls')),
+    path('api/auth/', include('apps.femi_api.urls_auth')),
 
     # 🔗 Endpoints Application
     path('api/v1/', include('apps.femi_api.urls')),
