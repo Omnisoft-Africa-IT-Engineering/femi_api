@@ -33,6 +33,7 @@ from apps.femi_api.views_devis import (
     DevisPDFAPIView,
 )
 from apps.femi_api.views_utilisateurs import (
+    ChangePasswordAPIView,
     CreerUtilisateurEntrepriseAPIView,
     ActiverCompteAPIView,
     RegenererCodeActivationAPIView,
@@ -63,6 +64,7 @@ urlpatterns = [
     path('transcrire-audio/', TranscrireAudioAPIView.as_view(), name='api_transcrire_audio'),
     path('auth/users/', CreerUtilisateurEntrepriseAPIView.as_view(), name='api_auth_create_user'),
     path('auth/activate/', ActiverCompteAPIView.as_view(), name='api_auth_activate'),
+    path('auth/change-password/', ChangePasswordAPIView.as_view(), name='api_auth_change_password'),
     path('auth/users/<uuid:utilisateur_id>/regenerate-code/', RegenererCodeActivationAPIView.as_view(), name='api_auth_regenerate_code'),
     path('equipe/', EquipeAPIView.as_view(), name='api_equipe'),
     path('equipe/<uuid:utilisateur_id>/', FicheEmployeAPIView.as_view(), name='api_equipe_fiche'),
