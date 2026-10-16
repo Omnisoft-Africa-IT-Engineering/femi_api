@@ -93,6 +93,43 @@ def _sum(qs, field="amount_ttc"):
 def _devise(entreprise):
     return getattr(entreprise, "devise", None) or "XOF"
 
+def _fmt_montant(val) -> str:
+    """Montant lisible WhatsApp (espace milliers, sans décimales inutiles)."""
+    try:
+        n = float(val or 0)
+    except (TypeError, ValueError):
+        n = 0.0
+    if abs(n - round(n)) < 0.005:
+        return f"{int(round(n)):,}".replace(",", " ")
+    return f"{n:,.2f}".replace(",", " ")
+
+
+_LABELS_PERIODE = {
+    "aujourd'hui": "aujourd'hui",
+    "hier": "hier",
+    "cette_semaine": "cette semaine",
+    "semaine_derniere": "la semaine dernière",
+    "ce_mois": "ce mois-ci",
+    "mois_dernier": "le mois dernier",
+    "cette_annee": "cette année",
+    "annee_derniere": "l'année dernière",
+    "depuis_debut": "depuis le début",
+}
+
+
+def _label_periode(periode: str | None) -> str:
+    if not periode:
+        return "sur la période"
+    if isinstance(periode, str) and periode.isdigit() and len(periode) == 4:
+        return f"en {periode}"
+    return _LABELS_PERIODE.get(periode, str(periode).replace("_", " "))
+
+
+def _devise_affiche(entreprise) -> str:
+    d = (_devise(entreprise) or "XOF").upper()
+    return {"XOF": "FCFA", "XAF": "FCFA"}.get(d, d)
+
+
 
 def _contexte(entreprise, periode, date_debut=None, date_fin=None):
     """Contexte de calcul kpi_service pour la période demandée au chat."""
@@ -107,16 +144,22 @@ def _contexte(entreprise, periode, date_debut=None, date_fin=None):
 def get_revenue(entreprise, periode, date_debut=None, date_fin=None):
     """
     Chiffre d'affaires (somme des RECETTE, amount_ttc) sur la période.
-    Reprend _calc_chiffre_affaires.
-
-    Returns:
-        {"periode": periode, "revenue": float, "currency": "XOF"}
+    Source unique : kpi_service (même chiffre que le dashboard).
+    resume_texte : réponse WhatsApp déterministe (pas de reformulation LLM).
     """
     ctx = _contexte(entreprise, periode, date_debut, date_fin)
+    revenue = calc_chiffre_affaires(ctx)
+    devise = _devise_affiche(entreprise)
+    label = _label_periode(periode)
+    resume = (
+        f"{label[0].upper() + label[1:]}, ton chiffre d'affaires est de "
+        f"{_fmt_montant(revenue)} {devise}."
+    )
     return {
         "periode": periode,
-        "revenue": calc_chiffre_affaires(ctx),
+        "revenue": revenue,
         "currency": _devise(entreprise),
+        "resume_texte": resume,
     }
 
 
@@ -150,77 +193,102 @@ def get_expenses(entreprise, periode, date_debut=None, date_fin=None, detail_par
             par_categorie.append({"categorie": "Sans catégorie", "montant": sans_categorie})
         par_categorie = par_categorie or None
 
+    devise = _devise_affiche(entreprise)
+    label = _label_periode(periode)
+    resume = (
+        f"{label[0].upper() + label[1:]}, tes dépenses s'élèvent à "
+        f"{_fmt_montant(expenses)} {devise}."
+    )
+    if par_categorie:
+        details = ", ".join(
+            f"{c['categorie']}: {_fmt_montant(c['montant'])} {devise}"
+            for c in par_categorie[:8]
+        )
+        resume += f" Détail : {details}."
     return {
         "periode": periode,
         "expenses": expenses,
         "currency": _devise(entreprise),
         "par_categorie": par_categorie,
+        "resume_texte": resume,
     }
 
 
 def calculate_profit(entreprise, periode, date_debut=None, date_fin=None):
     """
     Bénéfice = revenue - expenses sur la période. Reprend _calc_benefice.
-
-    Returns:
-        {"periode": periode, "profit": float, "currency": "XOF"}
+    resume_texte déterministe (évite hallucination LLM).
     """
     ctx = _contexte(entreprise, periode, date_debut, date_fin)
+    profit = calc_benefice(ctx)
+    devise = _devise_affiche(entreprise)
+    label = _label_periode(periode)
+    resume = (
+        f"{label[0].upper() + label[1:]}, ton bénéfice est de "
+        f"{_fmt_montant(profit)} {devise}."
+    )
     return {
         "periode": periode,
-        "profit": calc_benefice(ctx),
+        "profit": profit,
         "currency": _devise(entreprise),
+        "resume_texte": resume,
     }
 
 
 def calculate_margin(entreprise, periode, date_debut=None, date_fin=None):
     """
     Marge (%) = (revenue - expenses) / revenue * 100 sur la période.
-    Même calcul que le tableau de bord (kpi_service.calc_marge). Retourne
-    margin_percent = None (avec une note) s'il n'y a aucun chiffre d'affaires :
-    une marge de 0 % laisserait croire à une activité à l'équilibre.
-
-    Returns:
-        {"periode": periode, "margin_percent": float | None}
+    Même calcul que le tableau de bord (kpi_service.calc_marge).
     """
     ctx = _contexte(entreprise, periode, date_debut, date_fin)
     marge = calc_marge(ctx)
+    label = _label_periode(periode)
     if marge is None:
+        resume = (
+            f"{label[0].upper() + label[1:]}, aucun chiffre d'affaires : "
+            "la marge n'est pas calculable."
+        )
         return {
             "periode": periode,
             "margin_percent": None,
             "note": "Aucun chiffre d'affaires sur cette période : la marge n'est pas calculable.",
+            "resume_texte": resume,
         }
-    return {"periode": periode, "margin_percent": marge}
+    resume = (
+        f"{label[0].upper() + label[1:]}, ta marge est de "
+        f"{_fmt_montant(marge)} %."
+    )
+    return {
+        "periode": periode,
+        "margin_percent": marge,
+        "resume_texte": resume,
+    }
 
 
 def get_cashflow(entreprise, periode, date_debut=None, date_fin=None):
     """
-    Mouvement net de trésorerie PENDANT la période (entrées - sorties,
-    prêts compris). C'est la différence entre la trésorerie à la fin de la
-    période et à sa veille : même formule que calculate_balance.
-
-    encaisse / decaisse = argent réellement reçu / payé sur les opérations
-    de la période (montant_paye) ; net inclut en plus les prêts.
-
-    Returns:
-        {
-            "periode": periode,
-            "encaisse": float, "decaisse": float,
-            "net": float, "currency": str
-        }
+    Mouvement net de trésorerie PENDANT la période (entrées - sorties).
     """
     ops = _ops_periode(entreprise, periode, date_debut, date_fin)
     encaisse = _sum(ops.filter(transaction_type="RECETTE"), field="montant_paye")
     decaisse = _sum(ops.filter(transaction_type="DEPENSE"), field="montant_paye")
     ctx = _contexte(entreprise, periode, date_debut, date_fin)
-
+    net = calc_variation_tresorerie(ctx)
+    devise = _devise_affiche(entreprise)
+    label = _label_periode(periode)
+    resume = (
+        f"{label[0].upper() + label[1:]}, tes entrées sont de "
+        f"{_fmt_montant(encaisse)} {devise}, tes sorties de "
+        f"{_fmt_montant(decaisse)} {devise} "
+        f"(variation nette : {_fmt_montant(net)} {devise})."
+    )
     return {
         "periode": periode,
         "encaisse": float(encaisse),
         "decaisse": float(decaisse),
-        "net": calc_variation_tresorerie(ctx),
+        "net": net,
         "currency": _devise(entreprise),
+        "resume_texte": resume,
     }
 
 
@@ -228,12 +296,16 @@ def calculate_balance(entreprise, periode=None, **kwargs):
     """
     Solde de trésorerie CUMULÉ (tout l'historique, sans période).
     Même calcul que le tableau de bord (kpi_service.calc_tresorerie).
-
-    Returns:
-        {"balance": float, "currency": str}
     """
     ctx = KpiContexte(entreprise, None, None)
-    return {"balance": calc_tresorerie(ctx), "currency": _devise(entreprise)}
+    bal = calc_tresorerie(ctx)
+    devise = _devise_affiche(entreprise)
+    resume = f"Ta trésorerie actuelle est de {_fmt_montant(bal)} {devise}."
+    return {
+        "balance": bal,
+        "currency": _devise(entreprise),
+        "resume_texte": resume,
+    }
 
 def get_bilan(entreprise, periode="ce_mois", date_debut=None, date_fin=None):
     """

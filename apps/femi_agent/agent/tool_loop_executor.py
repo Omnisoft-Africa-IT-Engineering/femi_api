@@ -462,6 +462,14 @@ class ToolLoopExecutor:
                 "total_a_rembourser",
                 "total_du",
                 "total_restant",
+                "revenue",
+                "expenses",
+                "profit",
+                "margin_percent",
+                "balance",
+                "net",
+                "encaisse",
+                "decaisse",
             ):
                 if key in result and result[key] is not None:
                     key_figures[key] = result[key]
