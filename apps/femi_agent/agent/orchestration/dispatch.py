@@ -15,6 +15,7 @@ from apps.femi_agent.agent.accounting_modify_executor import AccountingModifyExe
 from apps.femi_agent.agent.conversation_manager import build_agent_context
 from apps.femi_agent.agent.customer_executor import CustomerExecutor
 from apps.femi_agent.agent.financial_analyst_executor import FinancialAnalystExecutor
+from apps.femi_agent.agent.general_executor import GeneralExecutor
 from apps.femi_agent.agent.quote_executor import QuoteExecutor
 from apps.femi_agent.schemas import (
     AccountingExtractionResult,
@@ -46,6 +47,7 @@ _AGENTS_NEED_HISTORY = {
     "CUSTOMER",
     "ACCOUNTING",
     "FINANCIAL_ANALYST",
+    "GENERAL",
 }
 
 
@@ -108,6 +110,11 @@ def dispatch_intent(
         result = QuoteExecutor.execute(text, entreprise)
         return result, result.needs_clarification
 
+    if intent.agent == "GENERAL":
+        # Lecture seule, ne clarifie jamais : résultat toujours un FinalAnswerOutput.
+        result = GeneralExecutor.execute(text, entreprise)
+        return result, False
+
     logger.warning(
         "[dispatch] Agent '%s' pas encore implémenté (intent_id=%s).",
         intent.agent,
@@ -150,6 +157,10 @@ async def adispatch_intent(
     if intent.agent == "QUOTE":
         result = await QuoteExecutor.aexecute(text, entreprise)
         return result, result.needs_clarification
+
+    if intent.agent == "GENERAL":
+        result = await GeneralExecutor.aexecute(text, entreprise)
+        return result, False
 
     logger.warning(
         "[dispatch] Agent '%s' pas encore implémenté (intent_id=%s).",

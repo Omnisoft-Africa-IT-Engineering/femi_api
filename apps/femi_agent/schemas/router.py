@@ -6,7 +6,7 @@ Aucun champ ajouté ou renommé par rapport au prompt.
 
 from typing import Literal,Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from apps.femi_agent.schemas.accounting_modify import AccountingModifyResult
 from apps.femi_agent.schemas.tool_loop import FinalAnswerOutput, ToolSelectionOutput
@@ -23,6 +23,7 @@ RouterAgent = Literal[
     "FINANCIAL_ANALYST",
     "CUSTOMER",
     "QUOTE",
+    "GENERAL",
     "SETTINGS",
     "UNKNOWN",
 ]
@@ -42,6 +43,16 @@ class RouterIntent(BaseModel):
     merge_context: bool
     context_resolved: bool
     raw_segment: str
+
+    @model_validator(mode="after")
+    def _general_ne_clarifie_jamais(self):
+        """GENERAL (lecture seule) répond toujours avec ce qu'il a : un drapeau
+        de clarification posé par le Router sur cet agent n'a aucun sens et
+        ajouterait une question parasite à la réponse déjà donnée."""
+        if self.agent == "GENERAL":
+            self.needs_clarification = False
+            self.missing_fields = []
+        return self
 
 
 class RouterOutput(BaseModel):
