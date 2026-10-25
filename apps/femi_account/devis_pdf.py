@@ -13,6 +13,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
+from django.core.exceptions import ObjectDoesNotExist
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 _BLEU = colors.HexColor("#1E3A8A")
@@ -46,9 +47,36 @@ def _p(texte, style) -> Paragraph:
     return Paragraph(escape(str(texte)).replace("\n", "<br/>"), style)
 
 
+def _profil_facturation(entreprise):
+    """Profil d'en-tête / pied de page de l'entreprise, ou None s'il n'existe pas."""
+    try:
+        return entreprise.profil_facturation
+    except ObjectDoesNotExist:
+        return None
+
+
+def _texte_pied(profil) -> str:
+    """Texte du pied de page (moyens de paiement, conditions), vide si rien."""
+    if profil is None:
+        return ""
+    morceaux = []
+    if (profil.moyens_paiement or "").strip():
+        morceaux.append(
+            "<b>Moyens de paiement :</b> "
+            + escape(profil.moyens_paiement.strip()).replace("\n", "<br/>")
+        )
+    if (profil.conditions_defaut or "").strip():
+        morceaux.append(
+            "<b>Conditions :</b> " + escape(profil.conditions_defaut.strip())
+        )
+    return "<br/>".join(morceaux)
+
+
 def generer_pdf_devis(devis) -> BytesIO:
     """Retourne le PDF du devis dans un BytesIO positionné au début."""
     entreprise = devis.entreprise
+    profil = _profil_facturation(entreprise)
+    texte_pied = _texte_pied(profil)
     client = devis.client
     devise = getattr(entreprise, "devise", None) or "FCFA"
     devise = {"XOF": "FCFA", "XAF": "FCFA"}.get(devise.upper(), devise)
@@ -60,7 +88,7 @@ def generer_pdf_devis(devis) -> BytesIO:
         rightMargin=2 * cm,
         leftMargin=2 * cm,
         topMargin=2 * cm,
-        bottomMargin=2 * cm,
+        bottomMargin=(3.6 if texte_pied else 2) * cm,
         title=f"Devis {devis.reference}",
     )
 
@@ -75,13 +103,23 @@ def generer_pdf_devis(devis) -> BytesIO:
     elements = [Paragraph("DEVIS", titre)]
 
     # --- En-tête : entreprise / références du devis -----------------------
-    lignes_entreprise = [f"<b>{escape(entreprise.nom)}</b>"]
-    if getattr(entreprise, "adresse", None):
-        lignes_entreprise.append(escape(entreprise.adresse))
-    if getattr(entreprise, "ifu", None):
-        lignes_entreprise.append(f"IFU : {escape(entreprise.ifu)}")
-    if getattr(entreprise, "rccm", None):
-        lignes_entreprise.append(f"RCCM : {escape(entreprise.rccm)}")
+    nom_affiche = (profil.nom_commercial or "").strip() if profil else ""
+    lignes_entreprise = [f"<b>{escape(nom_affiche or entreprise.nom)}</b>"]
+    adresse = ((profil.adresse or "").strip() if profil else "") or getattr(
+        entreprise, "adresse", None
+    )
+    if adresse:
+        lignes_entreprise.append(escape(adresse))
+    if profil and (profil.telephone_pro or "").strip():
+        lignes_entreprise.append(f"Tél : {escape(profil.telephone_pro.strip())}")
+    nif_rccm = (profil.nif_rccm or "").strip() if profil else ""
+    if nif_rccm:
+        lignes_entreprise.append(f"NIF / RCCM : {escape(nif_rccm)}")
+    else:
+        if getattr(entreprise, "ifu", None):
+            lignes_entreprise.append(f"IFU : {escape(entreprise.ifu)}")
+        if getattr(entreprise, "rccm", None):
+            lignes_entreprise.append(f"RCCM : {escape(entreprise.rccm)}")
 
     lignes_devis = [
         f"<b>Devis n° :</b> {escape(devis.reference)}",
@@ -157,6 +195,20 @@ def generer_pdf_devis(devis) -> BytesIO:
     signatures.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("BOTTOMPADDING", (0, 0), (-1, -1), 40)]))
     elements.append(signatures)
 
-    doc.build(elements)
+    petit = ParagraphStyle("PiedPage", parent=normal, fontSize=8, leading=10)
+
+    def pied_de_page(canvas, _doc):
+        """Dessine le pied de page (moyens de paiement, conditions) sur chaque page."""
+        if not texte_pied:
+            return
+        paragraphe = Paragraph(texte_pied, petit)
+        _, hauteur = paragraphe.wrap(A4[0] - 4 * cm, 3 * cm)
+        canvas.saveState()
+        canvas.setStrokeColor(_GRIS_BORDURE)
+        canvas.line(2 * cm, 1.2 * cm + hauteur + 0.2 * cm, A4[0] - 2 * cm, 1.2 * cm + hauteur + 0.2 * cm)
+        paragraphe.drawOn(canvas, 2 * cm, 1.2 * cm)
+        canvas.restoreState()
+
+    doc.build(elements, onFirstPage=pied_de_page, onLaterPages=pied_de_page)
     buffer.seek(0)
     return buffer

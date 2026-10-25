@@ -9,7 +9,7 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from apps.femi_account.devis_service import DevisInvalideError, creer_devis
-from apps.femi_account.models import Contact, Devis, LigneDevis
+from apps.femi_account.models import Contact, Devis, LigneDevis, ProfilFacturation
 
 
 class LigneDevisSerializer(serializers.ModelSerializer):
@@ -138,3 +138,14 @@ class LigneDevisMiseAJourSerializer(serializers.Serializer):
                 "Indique au moins un champ à modifier (description, quantite, prix_unitaire)."
             )
         return attrs
+
+
+class ProfilFacturationSerializer(serializers.ModelSerializer):
+    """En-tête / pied de page des devis (lecture et mise à jour partielle)."""
+
+    class Meta:
+        model = ProfilFacturation
+        fields = [
+            "nom_commercial", "telephone_pro", "adresse", "nif_rccm",
+            "moyens_paiement", "conditions_defaut",
+        ]

@@ -1033,3 +1033,29 @@ class LigneDevis(models.Model):
         result = super().delete(*args, **kwargs)
         devis.calculer_total()
         return result
+
+
+class ProfilFacturation(models.Model):
+    """En-tête et pied de page des documents (devis) d'une entreprise."""
+
+    entreprise = models.OneToOneField(
+        "Entreprise",
+        on_delete=models.CASCADE,
+        related_name="profil_facturation",
+    )
+    # En-tête
+    nom_commercial = models.CharField(max_length=255, blank=True, default="")
+    telephone_pro = models.CharField(max_length=50, blank=True, default="")
+    adresse = models.CharField(max_length=255, blank=True, null=True)
+    nif_rccm = models.CharField(max_length=150, blank=True, null=True)
+    # Pied de page
+    moyens_paiement = models.TextField(blank=True, default="")
+    conditions_defaut = models.CharField(max_length=255, blank=True, null=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Profil de facturation"
+        verbose_name_plural = "Profils de facturation"
+
+    def __str__(self):
+        return f"Profil de facturation — {self.entreprise.nom}"

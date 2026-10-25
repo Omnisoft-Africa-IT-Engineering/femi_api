@@ -25,13 +25,14 @@ from apps.femi_account.devis_service import (
     supprimer_ligne,
     utilisateur_est_employe,
 )
-from apps.femi_account.models import Contact, Devis
+from apps.femi_account.models import Contact, Devis, ProfilFacturation
 from apps.femi_api.serializers_devis import (
     AjoutLignesSerializer,
     DevisCreationSerializer,
     DevisMiseAJourSerializer,
     DevisSerializer,
     LigneDevisMiseAJourSerializer,
+    ProfilFacturationSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -238,6 +239,47 @@ class DevisLigneDetailAPIView(APIView):
         except DevisInvalideError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self._devis_a_jour(entreprise, devis))
+
+
+class DevisProfilAPIView(APIView):
+    """GET : en-tête / pied de page des devis. PATCH : les enregistre.
+
+    Tant que rien n'est enregistré, GET renvoie des valeurs vides (le nom
+    commercial et l'adresse sont préremplis depuis l'entreprise).
+    """
+
+    permission_classes = [IsAuthenticated, PasEmploye]
+
+    def get(self, request):
+        entreprise, erreur = _entreprise_ou_erreur(request)
+        if erreur:
+            return erreur
+        profil = ProfilFacturation.objects.filter(entreprise=entreprise).first()
+        if profil is not None:
+            return Response(ProfilFacturationSerializer(profil).data)
+        return Response(
+            {
+                "nom_commercial": entreprise.nom,
+                "telephone_pro": "",
+                "adresse": entreprise.adresse,
+                "nif_rccm": None,
+                "moyens_paiement": "",
+                "conditions_defaut": None,
+            }
+        )
+
+    def patch(self, request):
+        entreprise, erreur = _entreprise_ou_erreur(request)
+        if erreur:
+            return erreur
+        profil = (
+            ProfilFacturation.objects.filter(entreprise=entreprise).first()
+            or ProfilFacturation(entreprise=entreprise)
+        )
+        serializer = ProfilFacturationSerializer(profil, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(entreprise=entreprise)
+        return Response(serializer.data)
 
 
 class DevisPDFAPIView(APIView):
