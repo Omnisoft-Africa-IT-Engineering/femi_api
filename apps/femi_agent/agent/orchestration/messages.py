@@ -52,12 +52,18 @@ def summarize_devis(infos: dict, user_message: str = "") -> str:
         f"- total: {montant}\n"
         "- le PDF se télécharge depuis l'application, section Devis"
     )
-    return write_natural_reply(
+    texte = write_natural_reply(
         facts=facts,
         reply_type="quote_success",
         user_message=user_message,
         fallback=fallback,
     )
+    # L'application détecte la référence pour afficher le bouton « Ouvrir le
+    # devis » : on garantit qu'elle figure toujours dans la réponse, même si
+    # la reformulation du modèle l'a omise.
+    if infos["reference"] not in texte:
+        texte = f"{texte}\nRéférence : {infos['reference']}"
+    return texte
 
 
 def summarize_customer_payment(result: CustomerExtractionOutput) -> str:
