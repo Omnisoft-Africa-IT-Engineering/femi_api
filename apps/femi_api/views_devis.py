@@ -6,10 +6,14 @@ répond 404.
 """
 
 import logging
+from io import BytesIO
 
+from django.conf import settings
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
+from PIL import Image, UnidentifiedImageError
 from rest_framework import status
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -25,6 +29,7 @@ from apps.femi_account.devis_service import (
     supprimer_ligne,
     utilisateur_est_employe,
 )
+from apps.femi_account.integrations.supabase_storage import upload_file
 from apps.femi_account.models import Contact, Devis, ProfilFacturation
 from apps.femi_api.serializers_devis import (
     AjoutLignesSerializer,
@@ -260,6 +265,7 @@ class DevisProfilAPIView(APIView):
         return Response(
             {
                 "nom_commercial": entreprise.nom,
+                "logo": None,
                 "telephone_pro": "",
                 "adresse": entreprise.adresse,
                 "nif_rccm": None,
@@ -280,6 +286,93 @@ class DevisProfilAPIView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save(entreprise=entreprise)
         return Response(serializer.data)
+
+
+_TAILLE_MAX_LOGO = 5 * 1024 * 1024  # 5 Mo avant redimensionnement
+
+
+def _preparer_logo(fichier):
+    """Valide l'image, la réduit (600 px max) et renvoie (octets, nom, type MIME)."""
+    try:
+        image = Image.open(fichier)
+        image.load()
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError):
+        raise ValueError("Fichier image invalide (PNG ou JPEG attendu).")
+
+    image.thumbnail((600, 600))
+    tampon = BytesIO()
+    if image.mode in ("RGBA", "LA", "P"):
+        image.convert("RGBA").save(tampon, format="PNG", optimize=True)
+        return tampon.getvalue(), "logo.png", "image/png"
+    image.convert("RGB").save(tampon, format="JPEG", quality=88, optimize=True)
+    return tampon.getvalue(), "logo.jpg", "image/jpeg"
+
+
+class DevisProfilLogoAPIView(APIView):
+    """POST (multipart, champ « logo ») : envoie le logo de l'entreprise.
+    DELETE : retire le logo. Renvoie le profil à jour.
+
+    L'image est réduite puis stockée dans Supabase Storage ; seule son URL
+    publique est gardée en base.
+    """
+
+    permission_classes = [IsAuthenticated, PasEmploye]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        entreprise, erreur = _entreprise_ou_erreur(request)
+        if erreur:
+            return erreur
+
+        fichier = request.FILES.get("logo")
+        if fichier is None:
+            return Response(
+                {"error": "Fichier « logo » manquant."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if fichier.size > _TAILLE_MAX_LOGO:
+            return Response(
+                {"error": "Logo trop volumineux (5 Mo maximum)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            contenu, nom, type_mime = _preparer_logo(fichier)
+        except ValueError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not settings.SUPABASE_URL or not settings.SUPABASE_SERVICE_ROLE_KEY:
+            logger.error("[Devis] Supabase Storage non configuré : logo refusé.")
+            return Response(
+                {"error": "Stockage des fichiers indisponible pour le moment."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        try:
+            url = upload_file(contenu, nom, type_mime)
+        except Exception:
+            logger.exception("[Devis] Échec de l'envoi du logo vers Supabase")
+            return Response(
+                {"error": "Impossible d'enregistrer le logo. Réessaie plus tard."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        profil, _ = ProfilFacturation.objects.get_or_create(
+            entreprise=entreprise, defaults={"nom_commercial": entreprise.nom}
+        )
+        profil.logo_url = url
+        profil.save()
+        return Response(ProfilFacturationSerializer(profil).data)
+
+    def delete(self, request):
+        entreprise, erreur = _entreprise_ou_erreur(request)
+        if erreur:
+            return erreur
+        profil = ProfilFacturation.objects.filter(entreprise=entreprise).first()
+        if profil is not None and profil.logo_url:
+            profil.logo_url = None
+            profil.save()
+        return Response(
+            ProfilFacturationSerializer(profil).data if profil else {"logo": None}
+        )
 
 
 class DevisPDFAPIView(APIView):

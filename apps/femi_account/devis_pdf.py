@@ -5,16 +5,22 @@ backend). Aucune TVA n'est ajoutée ici : le devis affiche le total des lignes
 tel que saisi.
 """
 
+import logging
 from decimal import Decimal
 from io import BytesIO
 from xml.sax.saxutils import escape
 
+import requests
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from django.core.exceptions import ObjectDoesNotExist
+from reportlab.lib.utils import ImageReader
+from reportlab.platypus import Image as RLImage
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+logger = logging.getLogger(__name__)
 
 _BLEU = colors.HexColor("#1E3A8A")
 _GRIS_CLAIR = colors.HexColor("#F3F4F6")
@@ -52,6 +58,24 @@ def _profil_facturation(entreprise):
     try:
         return entreprise.profil_facturation
     except ObjectDoesNotExist:
+        return None
+
+
+def _logo_flowable(profil):
+    """Image du logo (téléchargée depuis son URL), ou None si absente / injoignable."""
+    url = (profil.logo_url or "").strip() if profil else ""
+    if not url:
+        return None
+    try:
+        reponse = requests.get(url, timeout=5)
+        reponse.raise_for_status()
+        octets = reponse.content
+        largeur, hauteur = ImageReader(BytesIO(octets)).getSize()
+        ratio = min(5 * cm / largeur, 2.2 * cm / hauteur)
+        return RLImage(BytesIO(octets), width=largeur * ratio, height=hauteur * ratio, hAlign="LEFT")
+    except Exception:
+        # Un logo injoignable ne doit jamais empêcher de générer le devis.
+        logger.warning("[DevisPDF] Logo inutilisable : %s", url, exc_info=True)
         return None
 
 
@@ -131,8 +155,13 @@ def generer_pdf_devis(devis) -> BytesIO:
         f"<b>Statut :</b> {_LIBELLES_STATUT.get(devis.statut, devis.statut)}"
     )
 
+    cellule_entreprise = [Paragraph("<br/>".join(lignes_entreprise), normal)]
+    logo = _logo_flowable(profil)
+    if logo is not None:
+        cellule_entreprise = [logo, Spacer(1, 0.2 * cm)] + cellule_entreprise
+
     entete = Table(
-        [[Paragraph("<br/>".join(lignes_entreprise), normal),
+        [[cellule_entreprise,
           Paragraph("<br/>".join(lignes_devis), normal)]],
         colWidths=[9 * cm, 8 * cm],
     )

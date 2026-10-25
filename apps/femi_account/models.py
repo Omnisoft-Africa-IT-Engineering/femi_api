@@ -1045,6 +1045,7 @@ class ProfilFacturation(models.Model):
     )
     # En-tête
     nom_commercial = models.CharField(max_length=255, blank=True, default="")
+    logo_url = models.CharField(max_length=500, blank=True, null=True)
     telephone_pro = models.CharField(max_length=50, blank=True, default="")
     adresse = models.CharField(max_length=255, blank=True, null=True)
     nif_rccm = models.CharField(max_length=150, blank=True, null=True)

@@ -143,9 +143,12 @@ class LigneDevisMiseAJourSerializer(serializers.Serializer):
 class ProfilFacturationSerializer(serializers.ModelSerializer):
     """En-tête / pied de page des devis (lecture et mise à jour partielle)."""
 
+    # Le logo n'est pas modifiable par PATCH : voir DevisProfilLogoAPIView.
+    logo = serializers.CharField(source="logo_url", read_only=True)
+
     class Meta:
         model = ProfilFacturation
         fields = [
-            "nom_commercial", "telephone_pro", "adresse", "nif_rccm",
+            "nom_commercial", "logo", "telephone_pro", "adresse", "nif_rccm",
             "moyens_paiement", "conditions_defaut",
         ]
