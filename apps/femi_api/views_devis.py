@@ -19,7 +19,10 @@ from apps.femi_account.devis_service import (
     MESSAGE_DEVIS_INTERDIT_EMPLOYE,
     DevisInvalideError,
     DevisNonModifiableError,
+    LigneIntrouvableError,
     ajouter_lignes,
+    modifier_ligne,
+    supprimer_ligne,
     utilisateur_est_employe,
 )
 from apps.femi_account.models import Contact, Devis
@@ -28,6 +31,7 @@ from apps.femi_api.serializers_devis import (
     DevisCreationSerializer,
     DevisMiseAJourSerializer,
     DevisSerializer,
+    LigneDevisMiseAJourSerializer,
 )
 
 logger = logging.getLogger(__name__)
@@ -188,6 +192,52 @@ class DevisLignesAPIView(APIView):
             DevisSerializer(_devis_de_l_entreprise(entreprise).get(pk=devis.pk)).data,
             status=status.HTTP_201_CREATED,
         )
+
+
+class DevisLigneDetailAPIView(APIView):
+    """PATCH : modifie une ligne d'un devis en brouillon. DELETE : la supprime.
+
+    Les montants sont recalculés par le backend. Renvoie le devis complet à
+    jour (200). Un devis qui n'est plus en brouillon répond 409 ; une ligne
+    inconnue 404 ; supprimer la dernière ligne répond 400.
+    """
+
+    permission_classes = [IsAuthenticated, PasEmploye]
+
+    def _devis_a_jour(self, entreprise, devis):
+        return DevisSerializer(_devis_de_l_entreprise(entreprise).get(pk=devis.pk)).data
+
+    def patch(self, request, pk, ligne_id):
+        entreprise, erreur = _entreprise_ou_erreur(request)
+        if erreur:
+            return erreur
+        devis = get_object_or_404(_devis_de_l_entreprise(entreprise), pk=pk)
+        serializer = LigneDevisMiseAJourSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            modifier_ligne(devis, ligne_id, serializer.validated_data)
+        except LigneIntrouvableError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except DevisNonModifiableError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except DevisInvalideError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(self._devis_a_jour(entreprise, devis))
+
+    def delete(self, request, pk, ligne_id):
+        entreprise, erreur = _entreprise_ou_erreur(request)
+        if erreur:
+            return erreur
+        devis = get_object_or_404(_devis_de_l_entreprise(entreprise), pk=pk)
+        try:
+            supprimer_ligne(devis, ligne_id)
+        except LigneIntrouvableError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_404_NOT_FOUND)
+        except DevisNonModifiableError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except DevisInvalideError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(self._devis_a_jour(entreprise, devis))
 
 
 class DevisPDFAPIView(APIView):

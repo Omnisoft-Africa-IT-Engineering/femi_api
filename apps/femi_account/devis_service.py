@@ -154,3 +154,72 @@ def ajouter_lignes(devis: Devis, lignes: Iterable) -> Devis:
         devis.montant_total,
     )
     return devis
+
+
+class LigneIntrouvableError(LookupError):
+    """La ligne demandée n'existe pas dans ce devis."""
+
+
+@transaction.atomic
+def modifier_ligne(devis: Devis, ligne_id: int, donnees: dict) -> Devis:
+    """Modifie une ligne d'un devis BROUILLON (champs partiels) et recalcule le total.
+
+    `donnees` peut contenir description, quantite, prix_unitaire ; les champs
+    absents gardent leur valeur actuelle. Les montants sont recalculés ici.
+    """
+    devis = Devis.objects.select_for_update().get(pk=devis.pk)
+    if devis.statut != "BROUILLON":
+        raise DevisNonModifiableError(
+            "Seul un devis en brouillon peut voir ses lignes modifiées."
+        )
+    ligne = devis.lignes.filter(pk=ligne_id).first()
+    if ligne is None:
+        raise LigneIntrouvableError("Ligne introuvable dans ce devis.")
+
+    fusion = {
+        "description": donnees.get("description", ligne.description),
+        "quantite": donnees.get("quantite", ligne.quantite),
+        "prix_unitaire": donnees.get("prix_unitaire", ligne.prix_unitaire),
+    }
+    valide = normaliser_lignes([fusion])[0]
+
+    ligne.description = valide["description"]
+    ligne.quantite = valide["quantite"]
+    ligne.prix_unitaire = valide["prix_unitaire"]
+    ligne.save()  # LigneDevis.save() recalcule montant_total et le total du devis
+
+    logger.info(
+        "[DevisService] Ligne modifiée : reference=%s ligne=%s total=%s",
+        devis.reference,
+        ligne.pk,
+        devis.montant_total,
+    )
+    return devis
+
+
+@transaction.atomic
+def supprimer_ligne(devis: Devis, ligne_id: int) -> Devis:
+    """Supprime une ligne d'un devis BROUILLON et recalcule le total.
+
+    Un devis doit garder au moins une ligne (règle déjà appliquée à la création).
+    """
+    devis = Devis.objects.select_for_update().get(pk=devis.pk)
+    if devis.statut != "BROUILLON":
+        raise DevisNonModifiableError(
+            "Seul un devis en brouillon peut voir ses lignes supprimées."
+        )
+    ligne = devis.lignes.filter(pk=ligne_id).first()
+    if ligne is None:
+        raise LigneIntrouvableError("Ligne introuvable dans ce devis.")
+    if devis.lignes.count() <= 1:
+        raise DevisInvalideError(
+            "Un devis doit garder au moins une ligne ; supprime le devis entier si besoin."
+        )
+    ligne.delete()  # LigneDevis.delete() recalcule le total du devis
+
+    logger.info(
+        "[DevisService] Ligne supprimée : reference=%s ligne=%s",
+        devis.reference,
+        ligne_id,
+    )
+    return devis

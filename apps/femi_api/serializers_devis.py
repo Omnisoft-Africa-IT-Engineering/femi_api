@@ -119,3 +119,22 @@ class AjoutLignesSerializer(serializers.Serializer):
             }
         ]
         return attrs
+
+
+class LigneDevisMiseAJourSerializer(serializers.Serializer):
+    """Modification partielle d'une ligne (au moins un champ)."""
+
+    description = serializers.CharField(max_length=500, required=False)
+    quantite = serializers.DecimalField(
+        max_digits=10, decimal_places=2, min_value=Decimal("0.01"), required=False
+    )
+    prix_unitaire = serializers.DecimalField(
+        max_digits=14, decimal_places=2, min_value=Decimal("0"), required=False
+    )
+
+    def validate(self, attrs):
+        if not attrs:
+            raise serializers.ValidationError(
+                "Indique au moins un champ à modifier (description, quantite, prix_unitaire)."
+            )
+        return attrs
