@@ -35,6 +35,12 @@ from apps.femi_api.views_devis import (
     DevisProfilAPIView,
     DevisProfilLogoAPIView,
 )
+from apps.femi_api.views_stock import (
+    MouvementListCreateAPIView,
+    ProduitDetailAPIView,
+    ProduitListCreateAPIView,
+    ResumeStockAPIView,
+)
 from apps.femi_api.views_utilisateurs import (
     ChangePasswordAPIView,
     CreerUtilisateurEntrepriseAPIView,
@@ -77,6 +83,12 @@ urlpatterns = [
     path('devis/', DevisListCreateAPIView.as_view(), name='api_devis_list_create'),
     path('devis/profil/', DevisProfilAPIView.as_view(), name='api_devis_profil'),
     path('devis/profil/logo/', DevisProfilLogoAPIView.as_view(), name='api_devis_profil_logo'),
+
+    # Stock
+    path('stock/resume/', ResumeStockAPIView.as_view(), name='api_stock_resume'),
+    path('stock/produits/', ProduitListCreateAPIView.as_view(), name='api_stock_produits'),
+    path('stock/produits/<uuid:pk>/', ProduitDetailAPIView.as_view(), name='api_stock_produit_detail'),
+    path('stock/mouvements/', MouvementListCreateAPIView.as_view(), name='api_stock_mouvements'),
     path('devis/<int:pk>/', DevisDetailAPIView.as_view(), name='api_devis_detail'),
     path('devis/<int:pk>/lignes/', DevisLignesAPIView.as_view(), name='api_devis_lignes'),
     path('devis/<int:pk>/lignes/<int:ligne_id>/', DevisLigneDetailAPIView.as_view(), name='api_devis_ligne_detail'),

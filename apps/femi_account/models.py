@@ -1,7 +1,7 @@
 import uuid
 from decimal import Decimal
 from django.db import models
-from django.db.models import Sum
+from django.db.models import Q, Sum
 from django.contrib.auth.models import AbstractUser
 import random
 from datetime import timedelta
@@ -1060,3 +1060,179 @@ class ProfilFacturation(models.Model):
 
     def __str__(self):
         return f"Profil de facturation — {self.entreprise.nom}"
+
+
+# ============================================================
+# STOCK
+# ============================================================
+
+class Produit(models.Model):
+    """Article géré en stock.
+
+    `stock_actuel` et `cout_moyen` ne se modifient JAMAIS directement : toute
+    variation passe par `stock_service.enregistrer_mouvement()`, qui écrit un
+    `MouvementStock` et met à jour ces deux champs dans la même transaction.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entreprise = models.ForeignKey(
+        "Entreprise",
+        on_delete=models.CASCADE,
+        related_name="produits",
+    )
+    nom = models.CharField(max_length=150)
+    sku = models.CharField(
+        max_length=50,
+        blank=True,
+        default="",
+        help_text="Code article (facultatif, unique dans l'entreprise s'il est renseigné).",
+    )
+    unite = models.CharField(max_length=30, default="pièce")
+    prix_vente = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    cout_moyen = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        help_text="Coût unitaire moyen pondéré (CUMP), recalculé à chaque entrée.",
+    )
+    stock_actuel = models.DecimalField(max_digits=14, decimal_places=3, default=0)
+    seuil_alerte = models.DecimalField(
+        max_digits=14,
+        decimal_places=3,
+        default=0,
+        help_text="Alerte quand le stock atteint ce seuil (0 = pas d'alerte).",
+    )
+    actif = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["nom"]
+        verbose_name = "Produit"
+        verbose_name_plural = "Produits"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["entreprise", "nom"], name="uniq_produit_nom_par_entreprise"
+            ),
+            models.UniqueConstraint(
+                fields=["entreprise", "sku"],
+                condition=~Q(sku=""),
+                name="uniq_produit_sku_par_entreprise",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["entreprise", "actif"], name="idx_produit_entreprise_actif"),
+        ]
+
+    def __str__(self):
+        return f"{self.nom} ({self.stock_actuel} {self.unite})"
+
+    @property
+    def valeur_stock(self):
+        """Valeur du stock au coût moyen (jamais négative)."""
+        return max(self.stock_actuel, 0) * self.cout_moyen
+
+    @property
+    def statut_stock(self):
+        """RUPTURE (<= 0), ALERTE (<= seuil) ou OK."""
+        if self.stock_actuel <= 0:
+            return "RUPTURE"
+        if self.seuil_alerte > 0 and self.stock_actuel <= self.seuil_alerte:
+            return "ALERTE"
+        return "OK"
+
+
+class MouvementStock(models.Model):
+    """Ligne du journal de stock : ajoutée une fois, jamais modifiée ni supprimée.
+
+    Pour corriger une erreur on enregistre un mouvement inverse. `variation`
+    est signée (+ entrée, - sortie) ; `stock_apres` fige le stock après coup.
+    """
+
+    TYPE_CHOICES = [
+        ("ENTREE", "Entrée"),
+        ("SORTIE", "Sortie"),
+        ("AJUSTEMENT", "Ajustement d'inventaire"),
+    ]
+    MOTIF_CHOICES = [
+        ("STOCK_INITIAL", "Stock initial"),
+        ("ACHAT", "Achat / réapprovisionnement"),
+        ("RETOUR_CLIENT", "Retour client"),
+        ("VENTE", "Vente"),
+        ("RETOUR_FOURNISSEUR", "Retour fournisseur"),
+        ("PERTE", "Perte"),
+        ("CASSE", "Casse / péremption"),
+        ("USAGE_INTERNE", "Usage interne"),
+        ("INVENTAIRE", "Inventaire"),
+        ("AUTRE", "Autre"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entreprise = models.ForeignKey(
+        "Entreprise",
+        on_delete=models.CASCADE,
+        related_name="mouvements_stock",
+    )
+    produit = models.ForeignKey(
+        "Produit",
+        on_delete=models.PROTECT,
+        related_name="mouvements",
+    )
+    type_mouvement = models.CharField(max_length=12, choices=TYPE_CHOICES)
+    motif = models.CharField(max_length=20, choices=MOTIF_CHOICES, default="AUTRE")
+    variation = models.DecimalField(max_digits=14, decimal_places=3)
+    stock_apres = models.DecimalField(max_digits=14, decimal_places=3)
+    cout_unitaire = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True
+    )
+    operation = models.ForeignKey(
+        "Operation",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="mouvements_stock",
+        help_text="Opération (vente / achat) à l'origine du mouvement, s'il y en a une.",
+    )
+    utilisateur = models.ForeignKey(
+        "Utilisateur",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="mouvements_stock",
+    )
+    note = models.CharField(max_length=255, blank=True, default="")
+    cle_idempotence = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        help_text="Évite de compter deux fois un mouvement renvoyé par l'app (réseau instable).",
+    )
+    date_mouvement = models.DateTimeField(default=timezone.now)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-date_mouvement", "-created_at"]
+        verbose_name = "Mouvement de stock"
+        verbose_name_plural = "Mouvements de stock"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["entreprise", "cle_idempotence"],
+                condition=Q(cle_idempotence__isnull=False),
+                name="uniq_mouvement_cle_idempotence",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["produit", "-date_mouvement"], name="idx_mvt_produit_date"),
+            models.Index(fields=["entreprise", "-date_mouvement"], name="idx_mvt_entreprise_date"),
+        ]
+
+    def __str__(self):
+        return f"{self.type_mouvement} {self.variation} - {self.produit_id}"
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValueError("Un mouvement de stock ne se modifie pas : ajoutez un mouvement inverse.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError("Un mouvement de stock ne se supprime pas : ajoutez un mouvement inverse.")
