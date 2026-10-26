@@ -36,6 +36,8 @@ from apps.femi_api.views_devis import (
     DevisProfilLogoAPIView,
 )
 from apps.femi_api.views_stock import (
+    ImportProduitsAPIView,
+    ModeleImportProduitsAPIView,
     MouvementListCreateAPIView,
     ProduitDetailAPIView,
     ProduitListCreateAPIView,
@@ -87,6 +89,8 @@ urlpatterns = [
     # Stock
     path('stock/resume/', ResumeStockAPIView.as_view(), name='api_stock_resume'),
     path('stock/produits/', ProduitListCreateAPIView.as_view(), name='api_stock_produits'),
+    path('stock/produits/import/', ImportProduitsAPIView.as_view(), name='api_stock_import'),
+    path('stock/produits/modele/', ModeleImportProduitsAPIView.as_view(), name='api_stock_modele'),
     path('stock/produits/<uuid:pk>/', ProduitDetailAPIView.as_view(), name='api_stock_produit_detail'),
     path('stock/mouvements/', MouvementListCreateAPIView.as_view(), name='api_stock_mouvements'),
     path('devis/<int:pk>/', DevisDetailAPIView.as_view(), name='api_devis_detail'),
