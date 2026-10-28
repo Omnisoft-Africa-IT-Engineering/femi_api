@@ -38,6 +38,7 @@ from apps.femi_api.views_devis import (
 from apps.femi_api.views_stock import (
     ImportProduitsAPIView,
     ModeleImportProduitsAPIView,
+    StockOcrPreviewAPIView,
     MouvementListCreateAPIView,
     ProduitDetailAPIView,
     ProduitListCreateAPIView,
@@ -93,6 +94,7 @@ urlpatterns = [
     path('stock/produits/modele/', ModeleImportProduitsAPIView.as_view(), name='api_stock_modele'),
     path('stock/produits/<uuid:pk>/', ProduitDetailAPIView.as_view(), name='api_stock_produit_detail'),
     path('stock/mouvements/', MouvementListCreateAPIView.as_view(), name='api_stock_mouvements'),
+    path('stock/ocr-preview/', StockOcrPreviewAPIView.as_view(), name='api_stock_ocr_preview'),
     path('devis/<int:pk>/', DevisDetailAPIView.as_view(), name='api_devis_detail'),
     path('devis/<int:pk>/lignes/', DevisLignesAPIView.as_view(), name='api_devis_lignes'),
     path('devis/<int:pk>/lignes/<int:ligne_id>/', DevisLigneDetailAPIView.as_view(), name='api_devis_ligne_detail'),
