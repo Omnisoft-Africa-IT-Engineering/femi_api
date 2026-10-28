@@ -27,6 +27,7 @@ Tu ne réponds JAMAIS à l'utilisateur. Tu ne calcules JAMAIS. Tu n'inventes JAM
 - CUSTOMER : créances, dettes fournisseurs, « qui me doit », « à qui je dois », infos contact (lecture)
 - FINANCIAL_ANALYST : CA, dépenses, bénéfice, marge, trésorerie, bilan (agrégés)
 - QUOTE : création de devis
+- STOCK : stock produits (entrées, sorties, inventaire, catalogue, état du stock)
 - GENERAL : LECTURE seule, tout ce que les autres agents ne couvrent pas : profil ou activité de l'entreprise, nombre de clients, meilleurs clients, principaux fournisseurs, ce qui se vend ou coûte le plus (par catégorie), services proposés, liste ou recherche d'opérations (« mes dernières ventes », « mes ventes de riz »), notions générales de gestion/compta, et messages hors sujet. Jamais de clarification pour cet agent.
 - SETTINGS : catégories, prix, paramètres
 - UNKNOWN : message totalement incompréhensible (aucun sens exploitable) — un message compréhensible mais hors périmètre va vers GENERAL
@@ -56,6 +57,8 @@ Ces messages vont TOUJOURS vers CUSTOMER / READ. JAMAIS ACCOUNTING. JAMAIS de cl
 3. « Koffi m'a donné 30 000 » sans contexte dette/prêt → ACCOUNTING / CREATE
 4. Modification/annulation d'opération existante → ACCOUNTING_MODIFY
 5. Devis ou suite de devis → QUOTE / CREATE (merge_context si pending)
+5b. Stock / inventaire / « j'ai reçu 20 sacs » / « sortie stock » / « mon stock » → STOCK (CREATE ou READ). Ne pas confondre avec une vente comptable purement monétaire.
+
 6. CA, bénéfice, bilan, trésorerie → FINANCIAL_ANALYST / READ
 7. Multi-intentions → plusieurs objets dans intents
 8. Ambiguïté entre agents pertinents → needs_clarification=true (jamais UNKNOWN)
@@ -70,7 +73,7 @@ requires_tool, needs_clarification, missing_fields, merge_context, context_resol
   "intents": [
     {
       "intent_id": "1",
-      "agent": "ACCOUNTING | ACCOUNTING_MODIFY | FINANCIAL_ANALYST | CUSTOMER | QUOTE | GENERAL | SETTINGS | UNKNOWN",
+      "agent": "ACCOUNTING | ACCOUNTING_MODIFY | FINANCIAL_ANALYST | CUSTOMER | QUOTE | STOCK | GENERAL | SETTINGS | UNKNOWN",
       "action_type": "READ | CREATE | UPDATE | DELETE",
       "confidence": 0.0,
       "is_sensitive": false,
@@ -110,6 +113,12 @@ Message : "Combien me doit Koffi ?"
 
 Message : "Koffi a payé 20 000 sur sa dette"
 → {"intents":[{"intent_id":"1","agent":"ACCOUNTING","action_type":"CREATE","confidence":0.95,"is_sensitive":false,"requires_confirmation":false,"requires_tool":false,"needs_clarification":false,"missing_fields":[],"merge_context":false,"context_resolved":false,"raw_segment":"Koffi a payé 20 000 sur sa dette"}]}
+
+Message : "j'ai reçu 20 sacs de riz à 3000"
+→ {"intents":[{"intent_id":"1","agent":"STOCK","action_type":"CREATE","confidence":0.95,"is_sensitive":false,"requires_confirmation":false,"requires_tool":false,"needs_clarification":false,"missing_fields":[],"merge_context":false,"context_resolved":false,"raw_segment":"j'ai reçu 20 sacs de riz à 3000"}]}
+
+Message : "montre mon stock"
+→ {"intents":[{"intent_id":"1","agent":"STOCK","action_type":"READ","confidence":0.9,"is_sensitive":false,"requires_confirmation":false,"requires_tool":true,"needs_clarification":false,"missing_fields":[],"merge_context":false,"context_resolved":false,"raw_segment":"montre mon stock"}]}
 
 Message : "je veux faire un devis"
 → {"intents":[{"intent_id":"1","agent":"QUOTE","action_type":"CREATE","confidence":0.95,"is_sensitive":false,"requires_confirmation":false,"requires_tool":false,"needs_clarification":false,"missing_fields":[],"merge_context":false,"context_resolved":false,"raw_segment":"je veux faire un devis"}]}

@@ -17,6 +17,7 @@ Usage :
 from __future__ import annotations
 
 import argparse
+import time
 import json
 import re
 import sys
@@ -337,6 +338,38 @@ def extract_json(text: str) -> Optional[dict | list]:
         return None
 
 
+def _reponse_en_texte(response: Any) -> str:
+    """Texte d'une réponse LLM, que `content` soit une chaîne ou une liste de blocs (Gemini)."""
+    from apps.femi_agent.agent.base_executor import _content_to_text
+
+    contenu = response.content if hasattr(response, "content") else str(response)
+    return _content_to_text(contenu)
+
+
+_RE_ATTENTE = re.compile(r"retry in ([0-9.]+)s|retryDelay['\"]?: ?['\"]([0-9.]+)s", re.IGNORECASE)
+
+
+def _appeler_llm(llm: Any, messages: list, essais: int = 4):
+    """llm.invoke() avec reprise automatique quand le quota du fournisseur est atteint (429).
+
+    Attend le délai indiqué par le fournisseur (« retry in 23s »), plus une marge,
+    puis réessaie. Toute autre erreur est relancée telle quelle.
+    """
+    for tentative in range(1, essais + 1):
+        try:
+            return llm.invoke(messages)
+        except Exception as exc:  # noqa: BLE001
+            texte = str(exc)
+            quota = "429" in texte or "RESOURCE_EXHAUSTED" in texte
+            if not quota or tentative == essais:
+                raise
+            trouve = _RE_ATTENTE.search(texte)
+            attente = float(next(g for g in trouve.groups() if g)) if trouve else 20.0
+            attente += 2.0
+            print(f"  ⏳ Quota atteint, nouvelle tentative dans {attente:.0f}s ({tentative}/{essais - 1})")
+            time.sleep(attente)
+
+
 def evaluate_router(result: Any, case: TestCase) -> tuple[bool, list[str]]:
     errors = []
     if not isinstance(result, dict):
@@ -490,7 +523,7 @@ def print_offline_suite(agent_filter: Optional[str] = None):
 # Mode LLM (optionnel)
 # ---------------------------------------------------------------------------
 
-def run_llm_evaluation(agent_filter: Optional[str] = None):
+def run_llm_evaluation(agent_filter: Optional[str] = None, delai: float = 4.5):
     """Tente d'appeler le LLM réel via le code du projet."""
     try:
         import django
@@ -529,7 +562,7 @@ def run_llm_evaluation(agent_filter: Optional[str] = None):
         cases = [c for c in cases if c.agent == agent_filter]
 
     print("=" * 70)
-    print(f"ÉVALUATION LLM — {len(cases)} cas")
+    print(f"ÉVALUATION LLM — {len(cases)} cas (pause de {delai:.1f}s entre les appels)")
     print("=" * 70)
 
     try:
@@ -543,7 +576,9 @@ def run_llm_evaluation(agent_filter: Optional[str] = None):
     failed = 0
     errors_detail = []
 
-    for case in cases:
+    for index, case in enumerate(cases):
+        if index and delai > 0:
+            time.sleep(delai)  # reste sous la limite de requêtes par minute du fournisseur
         system = prompt_map.get(case.agent)
         if not system:
             print(f"  [{case.id}] ⚠️  Pas de prompt pour agent={case.agent}")
@@ -560,8 +595,8 @@ def run_llm_evaluation(agent_filter: Optional[str] = None):
 
         print(f"\n[{case.id}] {case.message[:60]}{'...' if len(case.message) > 60 else ''}")
         try:
-            response = llm.invoke(messages)
-            raw = response.content if hasattr(response, "content") else str(response)
+            response = _appeler_llm(llm, messages)
+            raw = _reponse_en_texte(response)
             parsed = extract_json(raw)
             if parsed is None:
                 print(f"  ❌ JSON invalide")
@@ -606,10 +641,16 @@ def main():
         choices=["router", "accounting", "customer", "financial", "modify"],
         help="Filtrer sur un agent",
     )
+    parser.add_argument(
+        "--delai",
+        type=float,
+        default=4.5,
+        help="Pause en secondes entre deux appels (4.5 s = 13 appels/min, sous la limite gratuite de Gemini)",
+    )
     args = parser.parse_args()
 
     if args.llm:
-        success = run_llm_evaluation(args.agent)
+        success = run_llm_evaluation(args.agent, delai=args.delai)
         sys.exit(0 if success else 1)
     else:
         print_offline_suite(args.agent)

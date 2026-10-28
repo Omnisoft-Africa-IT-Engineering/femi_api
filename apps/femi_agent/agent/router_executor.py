@@ -17,6 +17,7 @@ from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import ValidationError
 
+from apps.femi_agent.agent.base_executor import _content_to_text
 from apps.femi_agent.agent.llm import get_llm
 from apps.femi_agent.agent.prompts.router_prompt import ROUTER_PROMPT
 from apps.femi_agent.schemas import RouterOutput
@@ -183,6 +184,9 @@ class RouterExecutor:
             ]
             raw_response = llm.invoke(messages)
             content = raw_response.content if hasattr(raw_response, "content") else str(raw_response)
+            # Gemini renvoie parfois le contenu sous forme de liste de blocs :
+            # sans cette conversion, re.search() levait TypeError.
+            content = _content_to_text(content)
 
             json_match = re.search(r"\{.*\}", content, re.DOTALL)
             if json_match:
