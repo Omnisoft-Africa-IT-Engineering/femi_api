@@ -187,6 +187,11 @@ class PendingTurn:
 
         # Nouveau sujet clair → ne pas coller l'ancien pending
         new_topic_markers = (
+            "stock", "entrée stock", "entree stock", "sortie stock",
+            "en stock", "j'ai reçu", "j ai recu", "j'ai recu",
+            "ajout", "réappro", "reappro", "inventaire",
+            "sacs de", "cartons de",
+
             "impay", "creanc", "créanc", "qui me doit", "a qui je dois",
             "à qui je dois", "chiffre d'affaire", "chiffre d affaire",
             "mon ca", "mon chiffre", "benefice", "bénéfice", "tresorerie",

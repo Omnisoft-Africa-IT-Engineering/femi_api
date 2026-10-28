@@ -173,6 +173,61 @@ class RouterInputError(Exception):
     pass
 
 
+
+
+def _message_looks_like_stock(text: str) -> bool:
+    """Heuristique : vocabulaire stock / quantité produit → pas la compta."""
+    import re
+    t = (text or "").casefold()
+    if not t.strip():
+        return False
+    mots = (
+        "entrée stock", "entree stock", "sortie stock", "en stock",
+        "mon stock", "inventaire", "réappro", "reappro",
+        "ajout ", "ajoute ", "j'ai reçu", "j ai reçu", "j'ai recu", "j ai recu",
+    )
+    if any(m in t for m in mots):
+        return True
+    if re.search(
+        r"\b\d+[\s.,]*\d*\s*(sacs?|cartons?|pi[eè]ces?|kg|litres?|bouteilles?|bo[iî]tes?)\b",
+        t,
+    ):
+        return True
+    return False
+
+
+def _force_stock_intent_if_needed(intents, message_text: str):
+    """Si le message est clairement stock, force agent STOCK."""
+    if not intents or not _message_looks_like_stock(message_text):
+        return intents
+    try:
+        from apps.femi_agent.schemas.router import RouterIntent
+    except Exception:
+        return intents
+    fixed = []
+    t = (message_text or "").casefold()
+    for intent in intents:
+        if getattr(intent, "agent", None) in (
+            "ACCOUNTING", "ACCOUNTING_MODIFY", "UNKNOWN", "GENERAL",
+        ):
+            data = intent.model_dump() if hasattr(intent, "model_dump") else dict(intent)
+            data["agent"] = "STOCK"
+            if any(x in t for x in ("mon stock", "liste mes produits", "état du stock", "etat du stock")):
+                data["action_type"] = "READ"
+            else:
+                data["action_type"] = "CREATE"
+            data["merge_context"] = False
+            data["needs_clarification"] = False
+            data["missing_fields"] = []
+            try:
+                fixed.append(RouterIntent(**data))
+            except Exception:
+                fixed.append(intent)
+        else:
+            fixed.append(intent)
+    return fixed
+
+
 class FemiRouterManager:
     """
     Gestionnaire central du nouveau pipeline :
@@ -276,6 +331,15 @@ class FemiRouterManager:
                 history=history_text,
                 **pending.router_kwargs(),
             )
+            try:
+                forced = _force_stock_intent_if_needed(
+                    list(router_output.intents), combined_text
+                )
+                if forced is not router_output.intents:
+                    router_output = router_output.model_copy(update={"intents": forced})
+            except Exception:
+                logger.exception("[FemiRouterManager] force STOCK ignoré")
+
 
             # Force merge si réponse courte à une action en attente
             # (ex. "Mr Toto" après "pour quel client ce devis ?")
@@ -535,6 +599,15 @@ class FemiRouterManager:
                 history=history_text,
                 **pending.router_kwargs(),
             )
+            # Messages stock → agent STOCK (évite dépense compta fantôme)
+            try:
+                forced = _force_stock_intent_if_needed(
+                    list(router_output.intents), combined_text
+                )
+                if forced is not router_output.intents:
+                    router_output = router_output.model_copy(update={"intents": forced})
+            except Exception:
+                logger.exception("[FemiRouterManager] force STOCK ignoré")
 
             # Force merge si réponse courte à une action en attente
             # (ex. "Mr Toto" après "pour quel client ce devis ?")
