@@ -9,7 +9,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from apps.femi_account.models import Entreprise, Operation, PieceJustificative, Utilisateur, Prestation, PrestationRealisee
-from apps.femi_agent.agent.pipeline import run_ai_extraction, arun_ai_extraction
+from apps.femi_agent.agent.legacy.pipeline import run_ai_extraction, arun_ai_extraction
 from apps.femi_agent.schemas import ProcessResult
 from apps.femi_agent.constants import GREETING_PATTERN, ANALYTICAL_PATTERN
 from apps.femi_account.fiscal import creer_ou_mettre_a_jour_echeance_tva

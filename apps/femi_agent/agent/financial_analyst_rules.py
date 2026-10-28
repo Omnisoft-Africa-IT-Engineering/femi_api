@@ -48,6 +48,26 @@ _MOTS_HORS_REGLE = (
 
 TOOLS_INDICATEURS = frozenset(t for t, _ in _INDICATEURS)
 
+# Marqueur ajouté par conversation_manager.build_agent_context() : le texte
+# reçu par l'agent est « [CONTEXTE CONVERSATION RÉCENT] ... [MESSAGE ACTUEL] ... ».
+_MARQUEUR_MESSAGE_ACTUEL = "[MESSAGE ACTUEL]"
+
+
+def message_courant(texte: str) -> str:
+    """Retourne uniquement le message de l'utilisateur, sans l'historique.
+
+    Pourquoi : depuis l'ajout du contexte multi-tour, le texte donné à
+    FINANCIAL_ANALYST contient les derniers échanges. Les règles ci-dessous
+    y trouvaient plusieurs indicateurs (« bénéfice » dit au tour d'avant) ou
+    une période de l'historique (« hier »), et la garde « chiffre d'affaire »
+    ne se déclenchait plus. Les règles doivent lire le message actuel seul ;
+    l'historique reste visible du LLM.
+    """
+    t = texte or ""
+    if _MARQUEUR_MESSAGE_ACTUEL in t:
+        return t.rsplit(_MARQUEUR_MESSAGE_ACTUEL, 1)[1].strip()
+    return t
+
 _MOIS = (
     "janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|"
     "septembre|octobre|novembre|décembre|decembre"

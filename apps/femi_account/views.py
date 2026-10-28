@@ -1,4 +1,5 @@
 import logging
+import os
 import requests
 
 from django.contrib.auth import get_user_model
@@ -7,6 +8,7 @@ from rest_framework.response import Response
 from rest_framework import status, permissions, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.authtoken.models import Token
 from rest_framework_simplejwt.tokens import RefreshToken  # type: ignore[import-not-found]
 from rest_framework_simplejwt.views import TokenObtainPairView
 from drf_spectacular.utils import extend_schema
@@ -181,6 +183,34 @@ class GoogleLoginView(APIView):
             )
 
         # ==========================================================
+        # 2bis. Vérifier que le token a bien été émis pour NOTRE appli
+        # ==========================================================
+        # GOOGLE_CLIENT_IDS : liste d'identifiants clients OAuth autorisés,
+        # séparés par des virgules (client Web utilisé comme serverClientId
+        # par l'app Android + client Web de Flutter Web).
+        allowed_audiences = [
+            c.strip()
+            for c in os.environ.get("GOOGLE_CLIENT_IDS", "").split(",")
+            if c.strip()
+        ]
+
+        if allowed_audiences:
+            if google_data.get("aud") not in allowed_audiences:
+                logger.warning(
+                    "Token Google refusé : aud=%s non autorisé",
+                    google_data.get("aud"),
+                )
+                return Response(
+                    {"error": "Token Google non émis pour cette application."},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+        else:
+            logger.warning(
+                "GOOGLE_CLIENT_IDS non défini : l'audience du token Google "
+                "n'est PAS vérifiée."
+            )
+
+        # ==========================================================
         # 3. Récupérer les informations Google
         # ==========================================================
 
@@ -223,12 +253,24 @@ class GoogleLoginView(APIView):
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
+            # L'API mobile (apps.femi_api) n'accepte que les tokens DRF
+            # (TokenAuthentication, en-tête "Authorization: Token <clé>").
+            # On renvoie donc le même token que /api/v1/auth/token/.
+            token, _ = Token.objects.get_or_create(user=user)
+
+            # Les tokens JWT sont conservés pour compatibilité avec les
+            # éventuels clients qui les utilisaient déjà.
             refresh = RefreshToken.for_user(user)
 
             return Response(
                 {
                     "message": "Connexion Google réussie.",
                     "is_new_user": False,
+                    "token": token.key,
+                    "utilisateur_id": str(user.id),
+                    "role": user.role,
+                    "entreprise_id": str(user.entreprise.id) if user.entreprise else None,
+                    "entreprise_nom": user.entreprise.nom if user.entreprise else None,
                     "tokens": {
                         "refresh": str(refresh),
                         "access": str(refresh.access_token),

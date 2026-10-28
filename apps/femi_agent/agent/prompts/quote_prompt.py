@@ -63,7 +63,24 @@ Message : "Un devis pour 5 chaises à 15 000."
 Message : "Fais un devis pour Ama."
 → {"client_nom": "Ama", "lignes": [], "needs_clarification": true, "missing_fields": ["quote_items"], "confidence": "medium"}
 
+
+Message fusionné : "je veux faire un devis\n4 Bic a 400\nsacs à 3000"
+→ {"client_nom": null, "lignes": [{"description": "Bic", "quantite": 4, "prix_unitaire": 400}, {"description": "sacs", "quantite": 1, "prix_unitaire": 3000}], "needs_clarification": true, "missing_fields": ["client_name"], "confidence": "high"}
+
+Message fusionné : "je veux faire un devis\n4 Bic a 400\nc'est fini"
+→ {"client_nom": null, "lignes": [{"description": "Bic", "quantite": 4, "prix_unitaire": 400}], "needs_clarification": true, "missing_fields": ["client_name"], "confidence": "high"}
+
+Message fusionné : "je veux faire un devis\nClient Dupont\n4 Bic a 400\nc'est fini"
+→ {"client_nom": "Client Dupont", "lignes": [{"description": "Bic", "quantite": 4, "prix_unitaire": 400}], "needs_clarification": false, "missing_fields": [], "confidence": "high"}
+
+RÈGLE « c'est fini » / « c'est tout » / « terminé » :
+- Ce n'est PAS un article. Ignore-le comme ligne.
+- Conserve toutes les lignes et le client déjà présents dans le texte fusionné.
+- Si client + au moins une ligne avec prix → needs_clarification=false.
+- N'invente JAMAIS de nom de client (pas de Mr Hola ni aucun nom d'exemple).
+
 ### RAPPEL
 Si le client est déjà dans le texte → ne le redemande jamais.
+N'invente jamais un client.
 Produis UNIQUEMENT le JSON.
 """

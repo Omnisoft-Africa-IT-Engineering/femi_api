@@ -54,6 +54,9 @@ def resolve_periode(periode, date_debut=None, date_fin=None, now=None):
         return date(annee, 1, 1), date(annee, 12, 31)
     
     if periode not in PERIODES_VALIDES:
+        # Jamais de repli silencieux sur « tout l'historique » : un CA faux est
+        # pire qu'une erreur. L'appelant (_run_tools) la transforme en message
+        # d'erreur générique pour le LLM.
         raise ValueError(f"periode inconnue : {periode!r}")
 
     if periode == "aujourd'hui":

@@ -1,8 +1,8 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from . import views_cron
+from ..femi_account import views_cron
 
-from .views import (
+from ..femi_account.views import (
     RegisterView,
     PublicLoginView,
     GoogleLoginView,
@@ -10,7 +10,7 @@ from .views import (
 )
 from .kpi_views import KpiView
 
-from . import views_notifications as vn
+from ..femi_api import views_notifications as vn
 
 router = DefaultRouter()
 router.register(r'echeances-fiscales', EcheanceFiscaleViewSet, basename='echeancefiscale')

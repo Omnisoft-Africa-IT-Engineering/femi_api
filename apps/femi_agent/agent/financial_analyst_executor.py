@@ -24,6 +24,7 @@ from apps.femi_agent.agent.financial_analyst_rules import (
     TOOLS_INDICATEURS,
     analyser_periode,
     indicateur_unique,
+    message_courant,
 )
 from apps.femi_agent.agent.prompts.financial_analyst_prompt import FINANCIAL_ANALYST_PROMPT
 from apps.femi_agent.agent.tool_loop_executor import ToolLoopExecutionError, ToolLoopExecutor
@@ -108,8 +109,11 @@ class FinancialAnalystExecutor:
         if codes & _CODES_A_RESPECTER:
             return selection
 
-        tool = indicateur_unique(message_text)
-        periode, periode_non_geree = analyser_periode(message_text)
+        # Les règles lisent le message actuel seul : message_text contient
+        # aussi l'historique récent (build_agent_context).
+        message_actuel = message_courant(message_text)
+        tool = indicateur_unique(message_actuel)
+        periode, periode_non_geree = analyser_periode(message_actuel)
 
         if tool and tool in tool_registry and not periode_non_geree:
             choisis = {c.tool for c in selection.tool_calls}

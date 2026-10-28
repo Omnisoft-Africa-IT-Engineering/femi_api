@@ -27,8 +27,9 @@ Tu ne réponds JAMAIS à l'utilisateur. Tu ne calcules JAMAIS. Tu n'inventes JAM
 - CUSTOMER : créances, dettes fournisseurs, « qui me doit », « à qui je dois », infos contact (lecture)
 - FINANCIAL_ANALYST : CA, dépenses, bénéfice, marge, trésorerie, bilan (agrégés)
 - QUOTE : création de devis
+- GENERAL : LECTURE seule, tout ce que les autres agents ne couvrent pas : profil ou activité de l'entreprise, nombre de clients, meilleurs clients, principaux fournisseurs, ce qui se vend ou coûte le plus (par catégorie), services proposés, liste ou recherche d'opérations (« mes dernières ventes », « mes ventes de riz »), notions générales de gestion/compta, et messages hors sujet. Jamais de clarification pour cet agent.
 - SETTINGS : catégories, prix, paramètres
-- UNKNOWN : hors périmètre total
+- UNKNOWN : message totalement incompréhensible (aucun sens exploitable) — un message compréhensible mais hors périmètre va vers GENERAL
 
 ### ACTIONS
 READ | CREATE | UPDATE | DELETE
@@ -58,6 +59,7 @@ Ces messages vont TOUJOURS vers CUSTOMER / READ. JAMAIS ACCOUNTING. JAMAIS de cl
 6. CA, bénéfice, bilan, trésorerie → FINANCIAL_ANALYST / READ
 7. Multi-intentions → plusieurs objets dans intents
 8. Ambiguïté entre agents pertinents → needs_clarification=true (jamais UNKNOWN)
+9. Question de lecture non couverte par CUSTOMER (créances, dettes, prêts, impayés) ni par FINANCIAL_ANALYST (CA, dépenses, bénéfice, marge, trésorerie, bilan) → GENERAL / READ, needs_clarification=false, missing_fields=[]. Les règles de consultation client / dettes ci-dessus restent PRIORITAIRES sur GENERAL.
 
 ### CHAMPS OBLIGATOIRES PAR INTENT
 intent_id, agent, action_type, confidence (0..1), is_sensitive, requires_confirmation,
@@ -68,7 +70,7 @@ requires_tool, needs_clarification, missing_fields, merge_context, context_resol
   "intents": [
     {
       "intent_id": "1",
-      "agent": "ACCOUNTING | ACCOUNTING_MODIFY | FINANCIAL_ANALYST | CUSTOMER | QUOTE | SETTINGS | UNKNOWN",
+      "agent": "ACCOUNTING | ACCOUNTING_MODIFY | FINANCIAL_ANALYST | CUSTOMER | QUOTE | GENERAL | SETTINGS | UNKNOWN",
       "action_type": "READ | CREATE | UPDATE | DELETE",
       "confidence": 0.0,
       "is_sensitive": false,
@@ -127,8 +129,27 @@ Message : "quels sont mes prêts"
 Message : "quelle sont prêts"
 → {"intents":[{"intent_id":"1","agent":"CUSTOMER","action_type":"READ","confidence":0.9,"is_sensitive":false,"requires_confirmation":false,"requires_tool":true,"needs_clarification":false,"missing_fields":[],"merge_context":false,"context_resolved":false,"raw_segment":"quelle sont prêts"}]}
 
+Message : "Quel est mon meilleur client ?"
+→ {"intents":[{"intent_id":"1","agent":"GENERAL","action_type":"READ","confidence":0.93,"is_sensitive":false,"requires_confirmation":false,"requires_tool":true,"needs_clarification":false,"missing_fields":[],"merge_context":false,"context_resolved":false,"raw_segment":"Quel est mon meilleur client ?"}]}
+
+Message : "Qu'est-ce qui se vend le plus ce mois-ci ?"
+→ {"intents":[{"intent_id":"1","agent":"GENERAL","action_type":"READ","confidence":0.93,"is_sensitive":false,"requires_confirmation":false,"requires_tool":true,"needs_clarification":false,"missing_fields":[],"merge_context":false,"context_resolved":false,"raw_segment":"Qu'est-ce qui se vend le plus ce mois-ci ?"}]}
+
+Message : "Montre-moi mes dernières ventes"
+→ {"intents":[{"intent_id":"1","agent":"GENERAL","action_type":"READ","confidence":0.93,"is_sensitive":false,"requires_confirmation":false,"requires_tool":true,"needs_clarification":false,"missing_fields":[],"merge_context":false,"context_resolved":false,"raw_segment":"Montre-moi mes dernières ventes"}]}
+
+Message : "Combien de clients j'ai ?"
+→ {"intents":[{"intent_id":"1","agent":"GENERAL","action_type":"READ","confidence":0.93,"is_sensitive":false,"requires_confirmation":false,"requires_tool":true,"needs_clarification":false,"missing_fields":[],"merge_context":false,"context_resolved":false,"raw_segment":"Combien de clients j'ai ?"}]}
+
+Message : "Parle-moi de mon entreprise"
+→ {"intents":[{"intent_id":"1","agent":"GENERAL","action_type":"READ","confidence":0.93,"is_sensitive":false,"requires_confirmation":false,"requires_tool":true,"needs_clarification":false,"missing_fields":[],"merge_context":false,"context_resolved":false,"raw_segment":"Parle-moi de mon entreprise"}]}
+
+Message : "C'est quoi l'amortissement ?"
+→ {"intents":[{"intent_id":"1","agent":"GENERAL","action_type":"READ","confidence":0.9,"is_sensitive":false,"requires_confirmation":false,"requires_tool":true,"needs_clarification":false,"missing_fields":[],"merge_context":false,"context_resolved":false,"raw_segment":"C'est quoi l'amortissement ?"}]}
+
 ### RAPPEL FINAL
 - « qui me doit / à qui je dois / créanciers / débiteurs / fournisseurs » = CUSTOMER READ, requires_tool=true
+- Question de lecture hors CUSTOMER / FINANCIAL_ANALYST (meilleur client, activité, ventes d'un produit, dernières opérations, notion de compta) = GENERAL READ, jamais de clarification
 - confidence = nombre 0..1
 - Champs exacts du format uniquement
 - Produis UNIQUEMENT le JSON

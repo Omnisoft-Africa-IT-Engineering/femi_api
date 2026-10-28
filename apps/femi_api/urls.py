@@ -28,11 +28,23 @@ from apps.femi_api.views_conversations import (
 )
 from apps.femi_api.views_devis import (
     DevisDetailAPIView,
+    DevisLigneDetailAPIView,
     DevisLignesAPIView,
     DevisListCreateAPIView,
     DevisPDFAPIView,
+    DevisProfilAPIView,
+    DevisProfilLogoAPIView,
+)
+from apps.femi_api.views_stock import (
+    ImportProduitsAPIView,
+    ModeleImportProduitsAPIView,
+    MouvementListCreateAPIView,
+    ProduitDetailAPIView,
+    ProduitListCreateAPIView,
+    ResumeStockAPIView,
 )
 from apps.femi_api.views_utilisateurs import (
+    ChangePasswordAPIView,
     CreerUtilisateurEntrepriseAPIView,
     ActiverCompteAPIView,
     RegenererCodeActivationAPIView,
@@ -63,6 +75,7 @@ urlpatterns = [
     path('transcrire-audio/', TranscrireAudioAPIView.as_view(), name='api_transcrire_audio'),
     path('auth/users/', CreerUtilisateurEntrepriseAPIView.as_view(), name='api_auth_create_user'),
     path('auth/activate/', ActiverCompteAPIView.as_view(), name='api_auth_activate'),
+    path('auth/change-password/', ChangePasswordAPIView.as_view(), name='api_auth_change_password'),
     path('auth/users/<uuid:utilisateur_id>/regenerate-code/', RegenererCodeActivationAPIView.as_view(), name='api_auth_regenerate_code'),
     path('equipe/', EquipeAPIView.as_view(), name='api_equipe'),
     path('equipe/<uuid:utilisateur_id>/', FicheEmployeAPIView.as_view(), name='api_equipe_fiche'),
@@ -70,7 +83,18 @@ urlpatterns = [
     path('conversations/', ConversationListAPIView.as_view(), name='api_conversations_list'),
     path('conversations/<uuid:conversation_id>/messages/', ConversationMessagesAPIView.as_view(), name='api_conversation_messages'),
     path('devis/', DevisListCreateAPIView.as_view(), name='api_devis_list_create'),
+    path('devis/profil/', DevisProfilAPIView.as_view(), name='api_devis_profil'),
+    path('devis/profil/logo/', DevisProfilLogoAPIView.as_view(), name='api_devis_profil_logo'),
+
+    # Stock
+    path('stock/resume/', ResumeStockAPIView.as_view(), name='api_stock_resume'),
+    path('stock/produits/', ProduitListCreateAPIView.as_view(), name='api_stock_produits'),
+    path('stock/produits/import/', ImportProduitsAPIView.as_view(), name='api_stock_import'),
+    path('stock/produits/modele/', ModeleImportProduitsAPIView.as_view(), name='api_stock_modele'),
+    path('stock/produits/<uuid:pk>/', ProduitDetailAPIView.as_view(), name='api_stock_produit_detail'),
+    path('stock/mouvements/', MouvementListCreateAPIView.as_view(), name='api_stock_mouvements'),
     path('devis/<int:pk>/', DevisDetailAPIView.as_view(), name='api_devis_detail'),
     path('devis/<int:pk>/lignes/', DevisLignesAPIView.as_view(), name='api_devis_lignes'),
+    path('devis/<int:pk>/lignes/<int:ligne_id>/', DevisLigneDetailAPIView.as_view(), name='api_devis_ligne_detail'),
     path('devis/<int:pk>/pdf/', DevisPDFAPIView.as_view(), name='api_devis_pdf'),
     ]

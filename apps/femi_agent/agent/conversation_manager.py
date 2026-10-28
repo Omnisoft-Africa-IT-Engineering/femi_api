@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 # ----------------------------------------------------------------
 
 CONVERSATION_GROUPING_HOURS = 24
-CONVERSATION_HISTORY_WINDOW = 12
+CONVERSATION_HISTORY_WINDOW = 20
 
 # Normalisation des valeurs de "source"/"canal" utilisées ailleurs dans le
 # code (router_manager.py reçoit "MOBILE", "whatsapp", etc.) vers les
@@ -167,6 +167,41 @@ def _touch_conversation(conversation: Conversation) -> None:
             "updated_at (conversation_id=%s) — ignoré.",
             getattr(conversation, "id", None),
         )
+
+
+
+
+def build_agent_context(
+    history_text: Optional[str],
+    current_segment: str,
+    *,
+    max_history_lines: int = 10,
+) -> str:
+    """Préfixe le segment agent avec l'historique récent.
+
+    Les agents spécialisés (MODIFY, QUOTE, ACCOUNTING…) ne voient que le
+    segment courant par défaut : sans ceci, « cet achat », « la dernière »,
+    « oui » perdent leur référent. Le Router, lui, reçoit déjà {history}.
+    """
+    segment = (current_segment or "").strip()
+    if not history_text or not history_text.strip():
+        return segment
+
+    lines = [ln for ln in history_text.strip().splitlines() if ln.strip()]
+    if not lines:
+        return segment
+    recent = lines[-max_history_lines:]
+    block = chr(10).join(recent)
+    return (
+        "[CONTEXTE CONVERSATION RÉCENT]"
+        + chr(10)
+        + block
+        + chr(10)
+        + chr(10)
+        + "[MESSAGE ACTUEL]"
+        + chr(10)
+        + segment
+    )
 
 
 def record_message(

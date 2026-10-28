@@ -9,7 +9,7 @@ from decimal import Decimal
 from rest_framework import serializers
 
 from apps.femi_account.devis_service import DevisInvalideError, creer_devis
-from apps.femi_account.models import Contact, Devis, LigneDevis
+from apps.femi_account.models import Contact, Devis, LigneDevis, ProfilFacturation
 
 
 class LigneDevisSerializer(serializers.ModelSerializer):
@@ -119,3 +119,36 @@ class AjoutLignesSerializer(serializers.Serializer):
             }
         ]
         return attrs
+
+
+class LigneDevisMiseAJourSerializer(serializers.Serializer):
+    """Modification partielle d'une ligne (au moins un champ)."""
+
+    description = serializers.CharField(max_length=500, required=False)
+    quantite = serializers.DecimalField(
+        max_digits=10, decimal_places=2, min_value=Decimal("0.01"), required=False
+    )
+    prix_unitaire = serializers.DecimalField(
+        max_digits=14, decimal_places=2, min_value=Decimal("0"), required=False
+    )
+
+    def validate(self, attrs):
+        if not attrs:
+            raise serializers.ValidationError(
+                "Indique au moins un champ à modifier (description, quantite, prix_unitaire)."
+            )
+        return attrs
+
+
+class ProfilFacturationSerializer(serializers.ModelSerializer):
+    """En-tête / pied de page des devis (lecture et mise à jour partielle)."""
+
+    # Le logo n'est pas modifiable par PATCH : voir DevisProfilLogoAPIView.
+    logo = serializers.CharField(source="logo_url", read_only=True)
+
+    class Meta:
+        model = ProfilFacturation
+        fields = [
+            "nom_commercial", "logo", "telephone_pro", "adresse", "nif_rccm",
+            "moyens_paiement", "conditions_defaut",
+        ]

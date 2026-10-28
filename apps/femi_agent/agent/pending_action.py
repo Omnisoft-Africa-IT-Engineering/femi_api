@@ -184,6 +184,26 @@ class PendingTurn:
             "je t'ai deja donne",
         )
         is_forget = any(p in normalized for p in forget_phrases)
+
+        # Nouveau sujet clair → ne pas coller l'ancien pending
+        new_topic_markers = (
+            "impay", "creanc", "créanc", "qui me doit", "a qui je dois",
+            "à qui je dois", "chiffre d'affaire", "chiffre d affaire",
+            "mon ca", "mon chiffre", "benefice", "bénéfice", "tresorerie",
+            "trésorerie", "liste moi", "liste les", "mes operation",
+            "je veux faire un devis", "faire un devis", "nouveau devis",
+            "j'ai vendu", "j ai vendu", "j'ai achete", "j'ai acheté",
+            "depense de", "dépense de", "bonjour", "salut", "bonsoir",
+            "quelle sont", "quelles sont", "quels sont",
+        )
+        is_new_topic = any(m in normalized for m in new_topic_markers)
+        if is_new_topic and not is_forget:
+            logger.info(
+                "[pending_action] force_merge ignoré (nouveau sujet): %r",
+                text[:80],
+            )
+            return
+
         is_short = is_forget or (len(text) <= 80 and "\n" not in text and text.count(" ") <= 12)
 
         if not is_short:

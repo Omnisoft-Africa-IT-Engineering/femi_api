@@ -443,3 +443,92 @@ class StatutEmployeAPIView(APIView):
             {"utilisateur_id": str(employe.id), "actif": employe.is_active},
             status=status.HTTP_200_OK,
         )
+
+
+class ChangePasswordAPIView(APIView):
+    """POST : change le mot de passe de l'utilisateur connecté.
+
+    Body JSON :
+      - old_password (requis)
+      - new_password (requis)
+      - confirm_password (requis, doit = new_password)
+
+    Auth : IsAuthenticated (Token ou JWT selon la config du projet).
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        old_password = request.data.get("old_password") or ""
+        new_password = request.data.get("new_password") or ""
+        confirm_password = request.data.get("confirm_password") or ""
+
+        if not old_password or not new_password or not confirm_password:
+            return Response(
+                {
+                    "error": (
+                        "old_password, new_password et confirm_password "
+                        "sont requis."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if new_password != confirm_password:
+            return Response(
+                {"error": "Les nouveaux mots de passe ne correspondent pas."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not user.has_usable_password():
+            return Response(
+                {
+                    "error": (
+                        "Ce compte n'a pas de mot de passe local "
+                        "(connexion Google uniquement). "
+                        "Impossible de le changer ici."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not user.check_password(old_password):
+            return Response(
+                {"error": "Ancien mot de passe incorrect."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if old_password == new_password:
+            return Response(
+                {
+                    "error": (
+                        "Le nouveau mot de passe doit être différent "
+                        "de l'ancien."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            validate_password(new_password, user)
+        except DjangoValidationError as exc:
+            return Response(
+                {"error": " ".join(exc.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.set_password(new_password)
+        user.save(update_fields=["password"])
+
+        # Invalide les anciens tokens DRF (sessions mobiles Token)
+        Token.objects.filter(user=user).delete()
+        token, _ = Token.objects.get_or_create(user=user)
+
+        return Response(
+            {
+                "message": "Mot de passe mis à jour.",
+                "token": token.key,
+            },
+            status=status.HTTP_200_OK,
+        )

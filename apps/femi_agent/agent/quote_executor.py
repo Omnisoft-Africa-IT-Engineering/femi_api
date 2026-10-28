@@ -34,7 +34,7 @@ class QuoteExecutor:
             error_cls=QuoteExecutionError,
             log_prefix="QuoteExecutor",
         )
-        return QuoteExtractionResult.from_llm_result(llm_result)
+        return QuoteExtractionResult.from_llm_result(llm_result, source_text=message_text)
 
     @classmethod
     async def aexecute(cls, message_text: str, entreprise=None) -> QuoteExtractionResult:
@@ -46,4 +46,4 @@ class QuoteExecutor:
             error_cls=QuoteExecutionError,
             log_prefix="QuoteExecutor",
         )
-        return QuoteExtractionResult.from_llm_result(llm_result)
+        return QuoteExtractionResult.from_llm_result(llm_result, source_text=message_text)

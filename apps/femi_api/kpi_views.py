@@ -6,8 +6,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Abonnement
-from .kpi_service import (
+from ..femi_account.models import Abonnement
+from ..femi_account.kpi_service import (
     calculer_kpi_sante, calculer_kpi_activite, calculer_kpi_finance,
     periode_precedente, variation,
 )

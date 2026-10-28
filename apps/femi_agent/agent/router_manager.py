@@ -25,6 +25,7 @@ from typing import Optional, Tuple
 
 from asgiref.sync import sync_to_async
 
+from apps.femi_agent.agent.orchestration.persistence import persist_quote_results
 from apps.femi_account.devis_service import (
     MESSAGE_DEVIS_INTERDIT_EMPLOYE,
     DevisInvalideError,
@@ -115,6 +116,35 @@ from apps.femi_agent.schemas import (
     ValidationOutput,
 )
 
+from apps.femi_agent.agent.orchestration.ingress import (
+    IngressError,
+    abuild_combined_text,
+    build_combined_text,
+)
+
+from apps.femi_agent.agent.orchestration.dispatch import (
+    adispatch_intent,
+    dispatch_intent,
+)
+
+from apps.femi_agent.agent.orchestration.replies import (
+    build_clarification_message,
+    build_static_clarification_message,
+    build_understood_recap,
+    greeting_result,
+    is_pure_greeting,
+    natural_notice,
+    natural_off_topic,
+)
+
+from apps.femi_agent.agent.orchestration.messages import (
+    format_montant,
+    format_values_for_facts,
+    summarize_candidates,
+    summarize_customer_payment,
+    summarize_devis,
+    summarize_propose_change,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +269,7 @@ class FemiRouterManager:
             pending = await sync_to_async(PendingTurn.load)(
                 conversation
             )
+            pending._history_text = history_text
 
             router_output = await RouterExecutor.aexecute(
                 combined_text,
@@ -497,6 +528,7 @@ class FemiRouterManager:
 
             # Actions en attente de clarification (best-effort)
             pending = PendingTurn.load(conversation)
+            pending._history_text = history_text
 
             router_output = RouterExecutor.execute(
                 combined_text,
@@ -683,72 +715,11 @@ class FemiRouterManager:
         image_bytes: Optional[bytes],
         audio_bytes: Optional[bytes],
     ) -> str:
-
-        parts: list[str] = []
-
-        # --------------------------------------------------------
-        # Texte
-        # --------------------------------------------------------
-
-        if text_input and text_input.strip():
-            parts.append(text_input.strip())
-
-        # --------------------------------------------------------
-        # OCR
-        # --------------------------------------------------------
-
-        if image_bytes:
-
-            ocr_result = OcrExecutor.execute(
-                image_bytes
-            )
-
-            # Informations structurées + contrôle des montants +
-            # texte brut en référence (voir ocr_postprocess.py)
-            readable_text = (
-                cls._ocr_result_to_readable_text(
-                    ocr_result
-                )
-            )
-
-            if readable_text:
-                parts.append(readable_text)
-
-        # --------------------------------------------------------
-        # AUDIO / STT
-        # --------------------------------------------------------
-
-        if audio_bytes:
-
-            raw_transcription = transcribe_audio(
-                audio_bytes
-            )
-
-            stt_result = SttExecutor.execute(
-                raw_transcription
-            )
-
-            if stt_result.corrected_text:
-
-                parts.append(
-                    stt_result.corrected_text
-                )
-
-        # --------------------------------------------------------
-        # Résultat final
-        # --------------------------------------------------------
-
-        combined = "\n".join(parts).strip()
-
-        if not combined:
-
-            raise RouterInputError(
-                "Aucune donnée textuelle ou multimédia "
-                "exploitable."
-            )
-
-        return combined
-
+        try:
+            return build_combined_text(text_input, image_bytes, audio_bytes)
+        except IngressError as exc:
+            raise RouterInputError(str(exc)) from exc
+    
     # ============================================================
     # OCR → TEXTE
     # ============================================================
@@ -771,67 +742,10 @@ class FemiRouterManager:
         image_bytes: Optional[bytes],
         audio_bytes: Optional[bytes],
     ) -> str:
-
-        parts: list[str] = []
-
-        # --------------------------------------------------------
-        # Texte
-        # --------------------------------------------------------
-
-        if text_input and text_input.strip():
-            parts.append(text_input.strip())
-
-        # --------------------------------------------------------
-        # OCR
-        # --------------------------------------------------------
-
-        if image_bytes:
-
-            ocr_result = await OcrExecutor.aexecute(
-                image_bytes
-            )
-
-            # Informations structurées + contrôle des montants +
-            # texte brut en référence (voir ocr_postprocess.py)
-            readable_text = (
-                cls._ocr_result_to_readable_text(
-                    ocr_result
-                )
-            )
-
-            if readable_text:
-                parts.append(readable_text)
-
-        # --------------------------------------------------------
-        # AUDIO / STT
-        # --------------------------------------------------------
-
-        if audio_bytes:
-
-            raw_transcription = await sync_to_async(
-                transcribe_audio
-            )(audio_bytes)
-
-            stt_result = await SttExecutor.aexecute(
-                raw_transcription
-            )
-
-            if stt_result.corrected_text:
-
-                parts.append(
-                    stt_result.corrected_text
-                )
-
-        combined = "\n".join(parts).strip()
-
-        if not combined:
-
-            raise RouterInputError(
-                "Aucune donnée textuelle ou multimédia "
-                "exploitable."
-            )
-
-        return combined
+        try:
+            return await abuild_combined_text(text_input, image_bytes, audio_bytes)
+        except IngressError as exc:
+            raise RouterInputError(str(exc)) from exc
 
     # ============================================================
     # TENANT / UTILISATEUR
@@ -1007,118 +921,15 @@ class FemiRouterManager:
         entreprise: Entreprise,
         from_document: bool = False,
         segment: Optional[str] = None,
+        history_text: Optional[str] = None,
     ) -> Tuple[DispatchResult, bool]:
-
-        # Texte envoyé à l'agent : segment fusionné avec l'action en
-        # attente (voir pending_action.py) ou, à défaut, celui du Router.
-        text = segment or intent.raw_segment
-
-        logger.info(
-            "[FemiRouterManager] "
-            "Dispatch intent: agent=%s | segment=%s",
-            intent.agent,
-            intent.raw_segment,
+        return dispatch_intent(
+            intent,
+            entreprise,
+            from_document=from_document,
+            segment=segment,
+            history_text=history_text,
         )
-
-        if intent.agent == "ACCOUNTING":
-
-            result = AccountingExecutor.execute(
-                text,
-                entreprise,
-                from_document=from_document,
-            )
-
-            logger.info(
-                "[FemiRouterManager] "
-                "AccountingExecutor résultat=%s",
-                result,
-            )
-
-            logger.info(
-                "[FemiRouterManager] "
-                "Accounting needs_clarification=%s",
-                getattr(
-                    result,
-                    "needs_clarification",
-                    None,
-                ),
-            )
-
-            return (
-                result,
-                result.needs_clarification,
-            )
-
-        if intent.agent == "FINANCIAL_ANALYST":
-
-            result = (
-                FinancialAnalystExecutor.execute(
-                    text,
-                    entreprise,
-                )
-            )
-
-            return (
-                result,
-                getattr(
-                    result,
-                    "needs_clarification",
-                    False,
-                ),
-            )
-
-        if intent.agent == "ACCOUNTING_MODIFY":
-
-            result = (
-                AccountingModifyExecutor.execute(
-                    text,
-                    entreprise,
-                )
-            )
-
-            return (
-                result,
-                result.needs_clarification,
-            )
-
-        if intent.agent == "CUSTOMER":
-
-            result = CustomerExecutor.execute(
-                text,
-                entreprise,
-            )
-
-            return (
-                result,
-                getattr(
-                    result,
-                    "needs_clarification",
-                    False,
-                ),
-            )
-
-        if intent.agent == "QUOTE":
-
-            result = QuoteExecutor.execute(
-                text,
-                entreprise,
-            )
-
-            return (
-                result,
-                result.needs_clarification,
-            )
-
-        logger.warning(
-            "[FemiRouterManager] "
-            "Agent '%s' pas encore implémenté "
-            "(intent_id=%s).",
-            intent.agent,
-            intent.intent_id,
-        )
-
-        return None, True
-
     # ============================================================
     # DISPATCH ASYNCHRONE
     # ============================================================
@@ -1130,94 +941,15 @@ class FemiRouterManager:
         entreprise: Entreprise,
         from_document: bool = False,
         segment: Optional[str] = None,
+        history_text: Optional[str] = None,
     ) -> Tuple[DispatchResult, bool]:
-
-        # Texte envoyé à l'agent : segment fusionné avec l'action en
-        # attente (voir pending_action.py) ou, à défaut, celui du Router.
-        text = segment or intent.raw_segment
-
-        if intent.agent == "ACCOUNTING":
-
-            result = await AccountingExecutor.aexecute(
-                text,
-                entreprise,
-                from_document=from_document,
-            )
-
-            return (
-                result,
-                result.needs_clarification,
-            )
-
-        if intent.agent == "FINANCIAL_ANALYST":
-
-            result = (
-                await FinancialAnalystExecutor.aexecute(
-                    text,
-                    entreprise,
-                )
-            )
-
-            return (
-                result,
-                getattr(
-                    result,
-                    "needs_clarification",
-                    False,
-                ),
-            )
-
-        if intent.agent == "ACCOUNTING_MODIFY":
-
-            result = (
-                await AccountingModifyExecutor.aexecute(
-                    text,
-                    entreprise,
-                )
-            )
-
-            return (
-                result,
-                result.needs_clarification,
-            )
-
-        if intent.agent == "CUSTOMER":
-
-            result = await CustomerExecutor.aexecute(
-                text,
-                entreprise,
-            )
-
-            return (
-                result,
-                getattr(
-                    result,
-                    "needs_clarification",
-                    False,
-                ),
-            )
-
-        if intent.agent == "QUOTE":
-
-            result = await QuoteExecutor.aexecute(
-                text,
-                entreprise,
-            )
-
-            return (
-                result,
-                result.needs_clarification,
-            )
-
-        logger.warning(
-            "[FemiRouterManager] "
-            "Agent '%s' pas encore implémenté "
-            "(intent_id=%s).",
-            intent.agent,
-            intent.intent_id,
+        return await adispatch_intent(
+            intent,
+            entreprise,
+            from_document=from_document,
+            segment=segment,
+            history_text=history_text,
         )
-
-        return None, True
 
     # ============================================================
     # SALUTATIONS (court-circuit, avant tout appel LLM)
@@ -1225,55 +957,19 @@ class FemiRouterManager:
 
     @classmethod
     def _is_pure_greeting(cls, text: str) -> bool:
-        """Message purement social (salutation, merci, au revoir, « qui
-        es-tu ? »). Vocabulaire fermé et aucun chiffre : voir
-        social_replies.py. Le nom est conservé pour les appelants."""
-        return classify_social_message(text) is not None
+        return is_pure_greeting(text)
 
     @staticmethod
     def _greeting_result(text: str = "") -> RouterProcessResult:
-        hour = timezone.localtime().hour
-        reply_type, facts = social_reply_context(text, hour)
-        return RouterProcessResult(
-            success=True,
-            message=write_natural_reply(
-                facts=facts,
-                reply_type=reply_type,
-                user_message=text,
-                fallback=build_social_reply(text, hour),
-                timeout=_SHORT_REPLY_TIMEOUT,
-            ),
-        )
+        return greeting_result(text)
 
     @staticmethod
     def _natural_notice(facts: str, fallback: str, user_message: str = "") -> str:
-        """Avis à l'utilisateur (échec de lecture d'un document, etc.)
-        rédigé naturellement ; `fallback` si le rédacteur échoue."""
-        return write_natural_reply(
-            facts=facts,
-            reply_type="error_user_action",
-            user_message=user_message,
-            fallback=fallback,
-            timeout=_SHORT_REPLY_TIMEOUT,
-        )
+        return natural_notice(facts, fallback, user_message)
 
     @staticmethod
     def _natural_off_topic(user_message: str = "") -> str:
-        return write_natural_reply(
-            facts=(
-                "Le message de l'utilisateur n'a pas pu être rattaché à une "
-                "action de Femi (hors sujet ou pas compris).\n"
-                "Ce que Femi sait faire : enregistrer ventes, dépenses et "
-                "prêts ; suivre les clients qui doivent de l'argent ; donner "
-                "chiffre d'affaires, dépenses, bénéfice, trésorerie ; "
-                "modifier ou annuler une opération."
-            ),
-            reply_type="off_topic",
-            user_message=user_message,
-            fallback=build_off_topic_reply(),
-            timeout=_SHORT_REPLY_TIMEOUT,
-        )
-
+        return natural_off_topic(user_message)
     # ============================================================
     # CONSTRUCTION DU MESSAGE FINAL EN LANGAGE NATUREL
     # ============================================================
@@ -1295,12 +991,8 @@ class FemiRouterManager:
     }
 
     @staticmethod
-    def _format_montant(amount, currency: Optional[str]) -> str:
-        devise = currency or "FCFA"
-        if amount is None:
-            return f"montant non précisé ({devise})"
-        formatted = f"{amount:,.0f}".replace(",", " ")
-        return f"{formatted} {devise}"
+    def _format_montant(amount, currency: Optional[str] = None) -> str:
+        return format_montant(amount, currency)
 
     @classmethod
     def _summarize_accounting_transactions(
@@ -1628,158 +1320,34 @@ class FemiRouterManager:
         quote_results: list[QuoteExtractionResult],
         entreprise: Entreprise,
     ) -> Tuple[list[dict], list[str]]:
-        """Crée en base les devis complets (sans clarification en attente).
+        return persist_quote_results(quote_results, entreprise)
 
-        Les montants sont calculés par le backend (creer_devis). Retourne
-        (faits de chaque devis créé, messages d'erreur à afficher). Les faits
-        sont de simples valeurs (aucune requête à relire plus tard) : cette
-        méthode tourne dans un thread sync, alors que le message final peut
-        être assemblé dans un contexte async.
-        """
-        devis_crees: list[dict] = []
-        erreurs: list[str] = []
-        for result in quote_results:
-            if result.needs_clarification:
-                continue
-            try:
-                devis = creer_devis(
-                    entreprise,
-                    lignes=[
-                        {
-                            "description": ligne.description,
-                            "quantite": ligne.quantite,
-                            "prix_unitaire": ligne.prix_unitaire,
-                        }
-                        for ligne in result.lignes
-                    ],
-                    client_nom=result.client_nom,
-                )
-                devise = getattr(entreprise, "devise", None) or "FCFA"
-                devis_crees.append(
-                    {
-                        "reference": devis.reference,
-                        "client": devis.client.nom if devis.client else None,
-                        "nb_lignes": len(result.lignes),
-                        "total": devis.montant_total,
-                        "devise": {"XOF": "FCFA", "XAF": "FCFA"}.get(
-                            devise.upper(), devise
-                        ),
-                    }
-                )
-            except DevisInvalideError as exc:
-                logger.warning("[FemiRouterManager] Devis refusé : %s", exc)
-                erreurs.append(f"Je n'ai pas pu créer le devis : {exc}")
-        return devis_crees, erreurs
 
     @staticmethod
     def _summarize_devis(infos: dict, user_message: str = "") -> str:
-        """Confirmation d'un devis créé, rédigée naturellement à partir des faits
-        préparés par _persist_quote_results (aucun accès base ici)."""
-        total = infos["total"]
-        total_txt = (
-            f"{total:,.0f}" if total == total.to_integral_value() else f"{total:,.2f}"
-        ).replace(",", " ")
-        montant = f"{total_txt} {infos['devise']}"
-        client = infos["client"] or "le client"
-        nb = infos["nb_lignes"]
-        articles = "1 ligne" if nb == 1 else f"{nb} lignes"
-
-        fallback = (
-            f"✅ Devis {infos['reference']} créé pour {client} : {articles}, "
-            f"total {montant}. Il est en brouillon ; tu peux le télécharger "
-            f"en PDF depuis l'application."
-        )
-        facts = (
-            "Devis créé avec succès (statut brouillon).\n"
-            f"- référence: {infos['reference']}\n"
-            f"- client: {client}\n"
-            f"- nombre de lignes: {nb}\n"
-            f"- total: {montant}\n"
-            "- le PDF se télécharge depuis l'application, section Devis"
-        )
-        return write_natural_reply(
-            facts=facts,
-            reply_type="quote_success",
-            user_message=user_message,
-            fallback=fallback,
-        )
+        return summarize_devis(infos, user_message)
 
     @classmethod
     def _summarize_customer_payment(cls, result: CustomerExtractionOutput) -> str:
-        """Filet de sécurité : le sous-flux CUSTOMER/CREATE n'enregistre RIEN
-        en base. Les paiements de dette (client ou fournisseur) passent par
-        ACCOUNTING (check_open_debt, voir accounting_manager). Si un message
-        arrive quand même ici, on le dit au lieu d'afficher un faux « ✅
-        enregistré », et on demande le sens du paiement."""
-        montant = cls._format_montant(result.amount_ttc, result.currency)
-        contact = result.contact or "ce contact"
-        return (
-            f"Je n'ai rien enregistré pour ce paiement de {montant}, car je "
-            f"ne sais pas dans quel sens il va. Dis-moi par exemple « {contact} "
-            f"m'a payé {montant} » (un client te règle) ou « j'ai réglé "
-            f"{montant} de ma dette chez {contact} » (tu règles un fournisseur)."
-        )
-
+        return summarize_customer_payment(result)
+    
     @staticmethod
     def _format_values_for_facts(values) -> str:
-        if not values:
-            return "n/a"
-        return "; ".join(f"{k}: {v}" for k, v in values.items() if v is not None)
+        return format_values_for_facts(values)
 
     @classmethod
-    def _summarize_propose_change(
-        cls,
-        result: AccountingModifyProposeChangeResult,
-        user_message: str = "",
-    ) -> str:
-        if result.action_type == "DELETE":
-            fallback = (
-                f"🗑️ Je propose de supprimer cette opération : {result.current_values}. "
-                "Confirmes-tu ?"
-            )
-            facts = (
-                "Proposition de SUPPRESSION d'une opération, en attente de "
-                "confirmation de l'utilisateur (rien n'est encore supprimé).\n"
-                f"Opération concernée : {cls._format_values_for_facts(result.current_values)}"
-            )
-        else:
-            fallback = (
-                f"✏️ Je propose de modifier cette opération : {result.proposed_values}. "
-                "Confirmes-tu ?"
-            )
-            facts = (
-                "Proposition de MODIFICATION d'une opération, en attente de "
-                "confirmation de l'utilisateur (rien n'est encore modifié).\n"
-                f"Valeurs actuelles : {cls._format_values_for_facts(result.current_values)}\n"
-                f"Nouvelles valeurs proposées : {cls._format_values_for_facts(result.proposed_values)}"
-            )
-        return write_natural_reply(
-            facts=facts,
-            reply_type="modify_propose",
-            user_message=user_message,
-            fallback=fallback,
-        )
+    def _summarize_propose_change(cls, result, user_message: str = "") -> str:
+        return summarize_propose_change(result, user_message)
 
+    
+    
     @staticmethod
     def _summarize_candidates(
         result: AccountingModifyResolutionResult,
         user_message: str = "",
     ) -> str:
-        if not result.candidates:
-            return "Je n'ai trouvé aucune opération correspondante."
-        candidats = "\n".join(f"- {c.summary}" for c in result.candidates)
-        fallback = f"Plusieurs opérations correspondent, laquelle veux-tu modifier/supprimer ?\n{candidats}"
-        facts = (
-            "Plusieurs opérations correspondent à la demande de "
-            f"{'suppression' if result.action_type == 'DELETE' else 'modification'}. "
-            "L'utilisateur doit dire laquelle.\nCandidates :\n" + candidats
-        )
-        return write_natural_reply(
-            facts=facts,
-            reply_type="modify_candidates",
-            user_message=user_message,
-            fallback=fallback,
-        )
+        return summarize_candidates(result, user_message)
+
 
     # ------------------------------------------------------------
     # QUESTIONS DE CLARIFICATION (codes missing_fields → français clair)
@@ -1826,27 +1394,8 @@ class FemiRouterManager:
 
     @classmethod
     def _build_understood_recap(cls, accounting_results) -> str | None:
-        """Phrase courte de ce que Femi a déjà compris (montant, contact),
-        pour ne pas redemander ce qu'il sait et rassurer l'utilisateur."""
+        return build_understood_recap(accounting_results)
 
-        for result in accounting_results or []:
-            if not getattr(result, "needs_clarification", False):
-                continue
-            for txn in getattr(result, "transactions", []) or []:
-                if not txn.amount_ttc:
-                    continue
-                montant = cls._format_montant(txn.amount_ttc, txn.currency)
-                contact = f" ({txn.contact})" if txn.contact else ""
-                avance = getattr(txn, "montant_deja_paye", None)
-                if avance:
-                    return (
-                        f"J'ai bien lu ta facture de {montant}{contact} "
-                        f"et je vois une avance de "
-                        f"{cls._format_montant(avance, txn.currency)}."
-                    )
-                return f"J'ai bien lu ton document : {montant}{contact}."
-
-        return None
 
 
     @staticmethod
@@ -1928,109 +1477,19 @@ class FemiRouterManager:
         accounting_results=None,
         user_message: str = "",
     ) -> str | None:
-        """Question(s) de précision rédigée(s) naturellement à partir des
-        codes missing_fields. Retourne None s'il n'y a rien à demander.
-
-        Les chiffres cités viennent uniquement du code : récap de ce qui est
-        compris et, pour un document scanné, incohérences détectées (bloc
-        [CONTRÔLE DU DOCUMENT] du message). Texte fixe de secours si le
-        rédacteur échoue."""
-        static = cls._build_static_clarification_message(
-            missing_fields, accounting_results
+        return build_clarification_message(
+            missing_fields, accounting_results, user_message
         )
-        if static is None:
-            return None
 
-        questions: list[str] = []
-        for code in missing_fields:
-            if code in cls._CLARIFICATION_SKIP_CODES:
-                continue
-            question = cls._MISSING_FIELD_QUESTIONS.get(code)
-            if question and question not in questions:
-                questions.append(question)
-
-        fact_lines = ["Informations à demander à l'utilisateur :"]
-        if questions:
-            fact_lines.extend(f"- {q}" for q in questions[:3])
-        else:
-            fact_lines.append("- Une précision générale : demande-lui d'en dire un peu plus.")
-        recap = cls._build_understood_recap(accounting_results)
-        if recap:
-            fact_lines.append(f"Ce que Femi a déjà compris : {recap}")
-        anomalies = extract_control_anomalies(user_message)
-        if anomalies:
-            fact_lines.append(
-                "Incohérences lues sur le document scanné (rien n'a été "
-                "corrigé ni enregistré) :"
-            )
-            fact_lines.extend(f"- {a}" for a in anomalies)
-
-        # Devis : le nom donné est le CLIENT, pas l'interlocuteur.
-        # Évite « Salut Mr Hola ! » quand l'utilisateur répond juste le nom.
-        codes = [c for c in missing_fields if c not in cls._CLARIFICATION_SKIP_CODES]
-        if "quote_items" in codes and "client_name" not in codes:
-            name = (user_message or "").strip()
-            if name and len(name) <= 80 and not any(
-                w in name.lower()
-                for w in ("devis", "article", "service", "prix", "quantit", "fcfa", " xof")
-            ):
-                return (
-                    f"Client noté : {name}.\n"
-                    "Quels articles ou services mettre sur le devis "
-                    "(avec quantités et prix) ?"
-                )
-
-        if "quote_items" in codes or "client_name" in codes:
-            fact_lines.append(
-                "Règle devis : un nom seul (ex. Mr Hola) est le CLIENT du devis, "
-                "pas l'interlocuteur. Ne le salue jamais. Dis « Client noté : … » "
-                "puis demande les articles."
-            )
-
-        return write_natural_reply(
-            facts="\n".join(fact_lines),
-            reply_type="clarification",
-            user_message=user_message,
-            fallback=static,
-        )
 
     @classmethod
     def _build_static_clarification_message(
-        cls,
-        missing_fields: list[str],
-        accounting_results=None,
+        cls, missing_fields, accounting_results=None
     ) -> str | None:
-        """Version à texte fixe (réponse de secours) de
-        _build_clarification_message. Question(s) en français à partir des
-        codes missing_fields.
+        return build_static_clarification_message(
+            missing_fields, accounting_results
+        )
 
-        Retourne None s'il n'y a rien à demander. Un code inconnu ne produit
-        jamais son nom technique : il est remplacé par une demande générique.
-        """
-        questions: list[str] = []
-        has_unknown = False
-        for code in missing_fields:
-            if code in cls._CLARIFICATION_SKIP_CODES:
-                continue
-            question = cls._MISSING_FIELD_QUESTIONS.get(code)
-            if question is None:
-                has_unknown = True
-            elif question not in questions:
-                questions.append(question)
-
-        if not questions and not has_unknown:
-            return None
-        if not questions:
-            return "Il me manque une petite précision pour continuer. Peux-tu m'en dire un peu plus ?"
-
-        questions = questions[:3]
-        recap = cls._build_understood_recap(accounting_results)
-        if len(questions) == 1:
-            intro = f"{recap} Une petite précision et j'enregistre :" if recap else "Une petite précision pour bien l'enregistrer :"
-            return f"{intro}\n{questions[0]}"
-        liste = "\n".join(f"{i}. {q}" for i, q in enumerate(questions, start=1))
-        intro = f"{recap} Deux ou trois précisions et j'enregistre :" if recap else "Pour bien l'enregistrer, j'ai juste besoin de quelques précisions :"
-        return f"{intro}\n{liste}"
 
     @classmethod
     def _build_final_message(
@@ -2295,11 +1754,12 @@ class FemiRouterManager:
 
                 result, dispatch_needs_clarification = (
                     cls._dispatch_intent(
-                        intent,
-                        entreprise,
-                        from_document=doc_flag,
-                        segment=segment,
-                    )
+                    intent,
+                    entreprise,
+                    from_document=doc_flag,
+                    segment=segment,
+                    history_text=getattr(pending, "_history_text", None),
+                )
                 )
 
                 if pending is not None:
@@ -2699,7 +2159,7 @@ class FemiRouterManager:
         # Création des devis (QUOTE)
         # --------------------------------------------------------
 
-        devis_crees, quote_erreurs = cls._persist_quote_results(
+        devis_crees, quote_erreurs = persist_quote_results(
             quote_results, entreprise
         )
         if quote_interdit:
@@ -3072,6 +2532,7 @@ class FemiRouterManager:
                     entreprise,
                     from_document=doc_flag,
                     segment=segment,
+                    history_text=getattr(pending, "_history_text", None),
                 )
             )
 
@@ -3209,7 +2670,7 @@ class FemiRouterManager:
         # --------------------------------------------------------
 
         devis_crees, quote_erreurs = await sync_to_async(
-            cls._persist_quote_results
+            persist_quote_results
         )(quote_results, entreprise)
         if quote_interdit:
             quote_erreurs = [MESSAGE_DEVIS_INTERDIT_EMPLOYE] + list(quote_erreurs)
