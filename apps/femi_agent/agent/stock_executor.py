@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import difflib
 from decimal import Decimal
 
 from apps.femi_account.models import Produit
@@ -37,19 +38,68 @@ class StockExecutionError(BaseAgentExecutionError):
     pass
 
 
-def _trouver_produit(entreprise, nom: str | None, sku: str | None = None):
+class StockFinalAnswer(FinalAnswerOutput):
+    """Réponse stock ; `awaiting_user` = Femi attend une précision de l'utilisateur
+    (le routeur enregistre alors l'attente pour fusionner la réponse suivante)."""
+
+    awaiting_user: bool = False
+
+
+def _resoudre_produit(entreprise, nom: str | None, sku: str | None = None):
+    """Retourne (produit, candidats).
+
+    - (produit, []) : une seule correspondance sûre ;
+    - (None, [..])  : plusieurs correspondances → on demande, on ne devine pas ;
+    - (None, [])    : aucune correspondance.
+    """
     qs = Produit.objects.filter(entreprise=entreprise, actif=True)
     if sku:
         p = qs.filter(sku__iexact=sku.strip()).first()
         if p:
-            return p
+            return p, []
     if not nom:
-        return None
+        return None, []
     nom = nom.strip()
-    p = qs.filter(nom__iexact=nom).first()
-    if p:
-        return p
-    return qs.filter(nom__icontains=nom).order_by("nom").first()
+    exacts = list(qs.filter(nom__iexact=nom)[:2])
+    if len(exacts) == 1:
+        return exacts[0], []
+    if len(exacts) > 1:
+        return None, exacts
+    contient = list(qs.filter(nom__icontains=nom).order_by("nom")[:6])
+    if len(contient) == 1:
+        return contient[0], []
+    if len(contient) > 1:
+        return None, contient
+    # « sacs de riz » alors que le produit s'appelle « Riz »
+    bas = nom.casefold()
+    inclus = [p for p in qs.order_by("nom")[:500] if p.nom.casefold() in bas]
+    if len(inclus) == 1:
+        return inclus[0], []
+    if len(inclus) > 1:
+        return None, inclus[:6]
+    return None, []
+
+
+def _question_choix(nom: str | None, candidats) -> str:
+    noms = " / ".join(f"« {p.nom} »" for p in candidats[:5])
+    return f"J'ai plusieurs produits pour « {nom} » : {noms}. Lequel est-ce ?"
+
+
+def _proches(entreprise, nom: str | None) -> list[str]:
+    if not nom:
+        return []
+    noms = list(
+        Produit.objects.filter(entreprise=entreprise, actif=True).values_list("nom", flat=True)[:500]
+    )
+    return difflib.get_close_matches(nom, noms, n=3, cutoff=0.6)
+
+
+def _etat(p) -> str:
+    if p.stock_actuel <= 0:
+        return "rupture de stock"
+    if p.seuil_alerte and p.seuil_alerte > 0 and p.stock_actuel <= p.seuil_alerte:
+        return f"sous le seuil d'alerte ({_fmt(p.seuil_alerte)})"
+    return "stock correct"
 
 
 def _fmt(n) -> str:
@@ -92,7 +142,7 @@ class StockExecutor:
     @classmethod
     def _appliquer(cls, extracted: StockExtractionResult, entreprise) -> FinalAnswerOutput:
         if "wrong_agent" in (extracted.missing_fields or []):
-            return FinalAnswerOutput(
+            return StockFinalAnswer(
                 step="final_answer",
                 answer=QUESTIONS["wrong_agent"],
                 key_figures={},
@@ -106,14 +156,18 @@ class StockExecutor:
                     qs.append(q)
             if not qs:
                 qs.append("Peux-tu préciser le produit et la quantité ?")
-            return FinalAnswerOutput(
+            return StockFinalAnswer(
                 step="final_answer",
                 answer=" ".join(qs),
                 key_figures={},
+                awaiting_user=True,
             )
 
+        awaiting = False
         try:
             answer = cls._executer_action(extracted, entreprise)
+            if isinstance(answer, tuple):
+                answer, awaiting = answer
         except StockInsuffisantError as exc:
             answer = str(exc)
         except (ProduitIntrouvableError, MouvementInvalideError, StockError) as exc:
@@ -122,14 +176,15 @@ class StockExecutor:
             logger.exception("[StockExecutor] échec action=%s", extracted.action)
             answer = "Je n'ai pas pu mettre à jour le stock. Réessaie ou passe par le formulaire."
 
-        return FinalAnswerOutput(
+        return StockFinalAnswer(
             step="final_answer",
             answer=answer,
             key_figures={},
+            awaiting_user=awaiting,
         )
 
     @classmethod
-    def _executer_action(cls, extracted: StockExtractionResult, entreprise) -> str:
+    def _executer_action(cls, extracted: StockExtractionResult, entreprise):
         action = extracted.action
 
         if action == "RESUME":
@@ -153,8 +208,30 @@ class StockExecutor:
             ]
             return ("Voici tes produits :" + chr(10) + chr(10).join(lignes))
 
+        if action == "STATUT":
+            produit, candidats = _resoudre_produit(entreprise, extracted.produit_nom, extracted.sku)
+            trouves = [produit] if produit else candidats
+            if not trouves:
+                proches = _proches(entreprise, extracted.produit_nom)
+                if proches:
+                    return (
+                        f"Je ne trouve pas « {extracted.produit_nom} ». "
+                        f"Tu voulais dire : {', '.join(proches)} ?",
+                        True,
+                    )
+                return f"Je ne trouve pas « {extracted.produit_nom} » dans ton stock."
+            return "\n".join(
+                f"• {p.nom} : {_fmt(p.stock_actuel)} {p.unite} — {_etat(p)}" for p in trouves
+            )
+
         if action == "CREATE_PRODUIT":
-            if _trouver_produit(entreprise, extracted.produit_nom, extracted.sku):
+            existant = None
+            qs_actifs = Produit.objects.filter(entreprise=entreprise, actif=True)
+            if extracted.sku:
+                existant = qs_actifs.filter(sku__iexact=extracted.sku.strip()).first()
+            if existant is None and extracted.produit_nom:
+                existant = qs_actifs.filter(nom__iexact=extracted.produit_nom.strip()).first()
+            if existant is not None:
                 return (
                     f"Le produit « {extracted.produit_nom} » existe déjà. "
                     "Dis-moi une entrée ou une sortie de stock pour le mettre à jour."
@@ -173,7 +250,9 @@ class StockExecutor:
             )
 
         # ENTREE / SORTIE / AJUSTEMENT
-        produit = _trouver_produit(entreprise, extracted.produit_nom, extracted.sku)
+        produit, candidats = _resoudre_produit(entreprise, extracted.produit_nom, extracted.sku)
+        if candidats:
+            return _question_choix(extracted.produit_nom, candidats), True
         if produit is None and action == "ENTREE":
             # Création auto à l'entrée si le produit n'existe pas
             produit = Produit.objects.create(

@@ -62,7 +62,7 @@ Ces messages vont TOUJOURS vers CUSTOMER / READ. JAMAIS ACCOUNTING. JAMAIS de cl
 5. Devis ou suite de devis → QUOTE / CREATE (merge_context si pending)
 5b. STOCK (PRIORITAIRE sur ACCOUNTING si quantité produit, pas seulement un montant FCFA) :
    → TOUJOURS STOCK / CREATE : « j'ai reçu 20 sacs de riz à 3000 », « entrée stock 20 riz », « ajout 20 sacs en stock », « sortie 5 bic », « inventaire », « réappro »
-   → TOUJOURS STOCK / READ : « mon stock », « liste mes produits »
+   → TOUJOURS STOCK / READ : « mon stock », « liste mes produits », « combien il me reste de riz ? », « ai-je encore du sucre ? » (question sur la quantité d'un produit)
    → ACCOUNTING seulement si l'utilisateur parle d'un MONTANT d'achat/vente SANS logique stock produit (ex. « dépense 100000 achat riz » sans « stock » / « sacs » / « entrée stock »)
    → Un pending ACCOUNTING (montant manquant) NE doit PAS absorber un nouveau message stock clair : merge_context=false, agent=STOCK
 

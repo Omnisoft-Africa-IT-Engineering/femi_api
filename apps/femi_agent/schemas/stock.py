@@ -15,6 +15,7 @@ StockAction = Literal[
     "CREATE_PRODUIT",
     "RESUME",
     "LISTE",
+    "STATUT",
 ]
 
 
@@ -24,7 +25,8 @@ class StockExtractionLLMResult(BaseModel):
     action: StockAction = Field(
         ...,
         description="ENTREE=réappro, SORTIE=vente/sortie, AJUSTEMENT=inventaire, "
-        "CREATE_PRODUIT=nouveau produit, RESUME=état du stock, LISTE=lister produits",
+        "CREATE_PRODUIT=nouveau produit, RESUME=état du stock, LISTE=lister produits, "
+        "STATUT=consulter le stock d'un produit précis",
     )
     produit_nom: Optional[str] = None
     sku: Optional[str] = None
@@ -71,7 +73,7 @@ class StockExtractionResult(BaseModel):
                 missing.append("quantite")
             if action == "SORTIE" and qte is not None and qte == 0:
                 missing.append("quantite")
-        elif action == "CREATE_PRODUIT":
+        elif action in ("CREATE_PRODUIT", "STATUT"):
             if not nom:
                 missing.append("produit_nom")
 

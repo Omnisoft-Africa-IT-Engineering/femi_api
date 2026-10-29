@@ -176,24 +176,10 @@ class RouterInputError(Exception):
 
 
 def _message_looks_like_stock(text: str) -> bool:
-    """Heuristique : vocabulaire stock / quantité produit → pas la compta."""
-    import re
-    t = (text or "").casefold()
-    if not t.strip():
-        return False
-    mots = (
-        "entrée stock", "entree stock", "sortie stock", "en stock",
-        "mon stock", "inventaire", "réappro", "reappro",
-        "ajout ", "ajoute ", "j'ai reçu", "j ai reçu", "j'ai recu", "j ai recu",
-    )
-    if any(m in t for m in mots):
-        return True
-    if re.search(
-        r"\b\d+[\s.,]*\d*\s*(sacs?|cartons?|pi[eè]ces?|kg|litres?|bouteilles?|bo[iî]tes?)\b",
-        t,
-    ):
-        return True
-    return False
+    """Vocabulaire stock explicite ou « j'ai reçu / ajoute » + quantité + unité."""
+    from apps.femi_agent.agent.stock_intent import looks_like_stock
+
+    return looks_like_stock(text)
 
 
 def _force_stock_intent_if_needed(intents, message_text: str):
@@ -204,15 +190,16 @@ def _force_stock_intent_if_needed(intents, message_text: str):
         from apps.femi_agent.schemas.router import RouterIntent
     except Exception:
         return intents
+    from apps.femi_agent.agent.stock_intent import is_stock_read
+
     fixed = []
-    t = (message_text or "").casefold()
     for intent in intents:
         if getattr(intent, "agent", None) in (
             "ACCOUNTING", "ACCOUNTING_MODIFY", "UNKNOWN", "GENERAL",
         ):
             data = intent.model_dump() if hasattr(intent, "model_dump") else dict(intent)
             data["agent"] = "STOCK"
-            if any(x in t for x in ("mon stock", "liste mes produits", "état du stock", "etat du stock")):
+            if is_stock_read(message_text):
                 data["action_type"] = "READ"
             else:
                 data["action_type"] = "CREATE"
@@ -1840,7 +1827,10 @@ class FemiRouterManager:
                         intent,
                         segment,
                         doc_flag,
-                        bool(dispatch_needs_clarification)
+                        (
+                            bool(dispatch_needs_clarification)
+                            or bool(getattr(result, "awaiting_user", False))
+                        )
                         and result is not None,
                         getattr(result, "missing_fields", None),
                     )
@@ -2614,7 +2604,10 @@ class FemiRouterManager:
                     intent,
                     segment,
                     doc_flag,
-                    bool(dispatch_needs_clarification)
+                    (
+                        bool(dispatch_needs_clarification)
+                        or bool(getattr(result, "awaiting_user", False))
+                    )
                     and result is not None,
                     getattr(result, "missing_fields", None),
                 )
