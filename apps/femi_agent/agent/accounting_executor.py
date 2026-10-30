@@ -13,6 +13,9 @@ schéma interne (Decimal) juste après réception, via .from_llm_result().
 
 import logging
 
+from asgiref.sync import sync_to_async
+
+from apps.femi_agent.agent.accounting_guard import completer_ou_demander_montant
 from apps.femi_agent.agent.base_executor import BaseAgentExecutionError, StructuredLLMExecutor
 from apps.femi_agent.agent.prompts.accounting_prompt import ACCOUNTING_PROMPT
 from apps.femi_agent.schemas import AccountingExtractionLLMResult, AccountingExtractionResult
@@ -204,7 +207,11 @@ class AccountingExecutor:
             error_cls=AccountingExecutionError,
             log_prefix="AccountingExecutor",
         )
-        return AccountingExtractionResult.from_llm_result(llm_result)
+        return completer_ou_demander_montant(
+            AccountingExtractionResult.from_llm_result(llm_result),
+            entreprise,
+            message_text,
+        )
 
     @classmethod
     async def aexecute(
@@ -228,4 +235,8 @@ class AccountingExecutor:
             error_cls=AccountingExecutionError,
             log_prefix="AccountingExecutor",
         )
-        return AccountingExtractionResult.from_llm_result(llm_result)
+        return await sync_to_async(completer_ou_demander_montant)(
+            AccountingExtractionResult.from_llm_result(llm_result),
+            entreprise,
+            message_text,
+        )

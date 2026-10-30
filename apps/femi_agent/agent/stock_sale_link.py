@@ -99,6 +99,7 @@ def detecter_lignes(entreprise, texte: str) -> list[dict]:
                 "unite": p.unite,
                 "quantite": qte,
                 "stock_actuel": p.stock_actuel,
+                "prix_vente": p.prix_vente,
                 "avec_unite": m.group("unite") is not None,
             }
         )
