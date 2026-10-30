@@ -161,7 +161,10 @@ class PendingTurn:
 
         Ne dépend plus uniquement du LLM pour la fusion multi-tour.
         """
-        if not self.entries or not intents:
+        # Les entrées « en attente de oui/non » ne servent pas à fusionner un
+        # message court : seules les clarifications (champ manquant) le font.
+        clarifications = [e for e in self.entries if not e.get("awaiting_confirmation")]
+        if not clarifications or not intents:
             return
 
         text = (message_text or "").strip()
@@ -201,7 +204,7 @@ class PendingTurn:
         )
         from apps.femi_agent.agent.stock_intent import looks_like_stock
 
-        pending_is_stock = bool(self.entries) and self.entries[0].get("agent") == "STOCK"
+        pending_is_stock = clarifications[0].get("agent") == "STOCK"
         stock_markers = (
             "entrée stock", "entree stock", "sortie stock",
             "en stock", "mon stock", "réappro", "reappro", "inventaire",
@@ -229,7 +232,7 @@ class PendingTurn:
         if not is_short:
             return
 
-        entry = self.entries[0]
+        entry = clarifications[0]
         pending_agent = entry.get("agent")
         if not pending_agent:
             return
