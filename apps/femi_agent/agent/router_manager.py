@@ -190,14 +190,40 @@ def _message_looks_like_stock(text: str) -> bool:
 
 
 def _force_stock_intent_if_needed(intents, message_text: str):
-    """Si le message est clairement stock, force agent STOCK."""
-    if not intents or not _message_looks_like_stock(message_text):
+    """Si le message est clairement stock, force agent STOCK.
+
+    Une VENTE (« j'ai vendu 5 sacs de riz à 3000 ») n'est pas un mouvement de
+    stock : elle doit passer par la compta (registre) ; le stock est ensuite
+    décompté par stock_sale_link. Si le routeur l'a envoyée en STOCK, on la
+    remet en ACCOUNTING, sauf vocabulaire stock explicite (« en stock », …).
+    """
+    if not intents:
         return intents
     try:
         from apps.femi_agent.schemas.router import RouterIntent
     except Exception:
         return intents
-    from apps.femi_agent.agent.stock_intent import is_stock_read
+    from apps.femi_agent.agent.stock_intent import is_stock_read, looks_like_sale
+
+    if looks_like_sale(message_text) and not _message_looks_like_stock(message_text):
+        remis = []
+        for intent in intents:
+            if getattr(intent, "agent", None) == "STOCK":
+                data = intent.model_dump() if hasattr(intent, "model_dump") else dict(intent)
+                data["agent"] = "ACCOUNTING"
+                data["action_type"] = "CREATE"
+                data["needs_clarification"] = False
+                data["missing_fields"] = []
+                try:
+                    remis.append(RouterIntent(**data))
+                    continue
+                except Exception:
+                    pass
+            remis.append(intent)
+        return remis
+
+    if not _message_looks_like_stock(message_text):
+        return intents
 
     fixed = []
     for intent in intents:

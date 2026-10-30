@@ -2,7 +2,7 @@
 
 from django.test import SimpleTestCase
 
-from apps.femi_agent.agent.stock_intent import is_stock_read, looks_like_stock
+from apps.femi_agent.agent.stock_intent import is_stock_read, looks_like_sale, looks_like_stock
 
 
 class StockIntentTests(SimpleTestCase):
@@ -35,3 +35,9 @@ class StockIntentTests(SimpleTestCase):
         self.assertTrue(is_stock_read("est-ce que j'ai encore du riz en stock ?"))
         self.assertFalse(is_stock_read("j'ai reçu 20 sacs de riz à 3000"))
         self.assertFalse(is_stock_read("Entrée stock 20 de riz"))
+
+    def test_vente_reconnue(self):
+        for t in ("j'ai vendu 5 sacs de riz à 3000", "J’ai vendu 10 bic", "vente de 3 cartons de lait"):
+            self.assertTrue(looks_like_sale(t), t)
+        for t in ("mes ventes de la semaine ?", "j'ai reçu 20 sacs de riz", "mon stock", "j'ai vendu du riz"):
+            self.assertFalse(looks_like_sale(t), t)

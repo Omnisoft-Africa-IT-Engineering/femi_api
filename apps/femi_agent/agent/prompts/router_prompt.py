@@ -63,6 +63,7 @@ Ces messages vont TOUJOURS vers CUSTOMER / READ. JAMAIS ACCOUNTING. JAMAIS de cl
 5b. STOCK (PRIORITAIRE sur ACCOUNTING si quantité produit, pas seulement un montant FCFA) :
    → TOUJOURS STOCK / CREATE : « j'ai reçu 20 sacs de riz à 3000 », « entrée stock 20 riz », « ajout 20 sacs en stock », « sortie 5 bic », « inventaire », « réappro »
    → TOUJOURS STOCK / READ : « mon stock », « liste mes produits », « combien il me reste de riz ? », « ai-je encore du sucre ? » (question sur la quantité d'un produit)
+   → VENTE de produits (« j'ai vendu 5 sacs de riz à 3000 », « vente de 10 bic ») = ACCOUNTING / CREATE, JAMAIS STOCK : la vente va au registre et le stock est décompté automatiquement ensuite
    → ACCOUNTING seulement si l'utilisateur parle d'un MONTANT d'achat/vente SANS logique stock produit (ex. « dépense 100000 achat riz » sans « stock » / « sacs » / « entrée stock »)
    → Un pending ACCOUNTING (montant manquant) NE doit PAS absorber un nouveau message stock clair : merge_context=false, agent=STOCK
 
@@ -133,6 +134,9 @@ Message : "Ajout 20 sacs de riz en stock"
 
 Pending ACCOUNTING (montant manquant) + Message : "J'ai reçu 20 sacs de riz à 3000"
 → {"intents":[{"intent_id":"1","agent":"STOCK","action_type":"CREATE","confidence":0.95,"is_sensitive":false,"requires_confirmation":false,"requires_tool":false,"needs_clarification":false,"missing_fields":[],"merge_context":false,"context_resolved":false,"raw_segment":"J'ai reçu 20 sacs de riz à 3000"}]}
+
+Message : "j'ai vendu 5 sacs de riz à 3000"
+→ {"intents":[{"intent_id":"1","agent":"ACCOUNTING","action_type":"CREATE","confidence":0.95,"is_sensitive":false,"requires_confirmation":false,"requires_tool":false,"needs_clarification":false,"missing_fields":[],"merge_context":false,"context_resolved":false,"raw_segment":"j'ai vendu 5 sacs de riz à 3000"}]}
 
 Message : "montre mon stock"
 → {"intents":[{"intent_id":"1","agent":"STOCK","action_type":"READ","confidence":0.9,"is_sensitive":false,"requires_confirmation":false,"requires_tool":true,"needs_clarification":false,"missing_fields":[],"merge_context":false,"context_resolved":false,"raw_segment":"montre mon stock"}]}

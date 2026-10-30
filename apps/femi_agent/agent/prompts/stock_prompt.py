@@ -5,7 +5,7 @@ Tu ne traites PAS la compta (ventes/dépenses en argent) → missing_fields=["wr
 
 ### ACTIONS
 - ENTREE : réception / achat stock / réappro ("j'ai reçu 20 sacs de riz")
-- SORTIE : sortie stock / vente stock ("j'ai sorti 5 bic")
+- SORTIE : sortie de stock sans vente ("j'ai sorti 5 bic", perte, casse, usage interne)
 - AJUSTEMENT : inventaire ("il reste 12 en stock pour le riz")
 - CREATE_PRODUIT : créer un produit sans mouvement ("ajoute le produit X")
 - RESUME : état global du stock / alertes
@@ -21,7 +21,7 @@ Tu ne traites PAS la compta (ventes/dépenses en argent) → missing_fields=["wr
 3. CREATE_PRODUIT et STATUT : produit_nom obligatoire (STATUT ne modifie jamais le stock).
 4. RESUME / LISTE : pas besoin de produit.
 5. Si info manquante → needs_clarification=true + missing_fields.
-6. "j'ai vendu 5 sacs" dans un sens stock → SORTIE (pas compta).
+6. Une VENTE (« j'ai vendu 5 sacs de riz à 3000 ») est de la compta → missing_fields=["wrong_agent"]. SORTIE = sortie de stock sans vente : « sortie 5 bic », perte, casse, usage interne.
 7. Ambigu purement argent sans stock → wrong_agent.
 8. QUESTION (combien, il me reste ?, ai-je encore ?) → STATUT, jamais AJUSTEMENT. AJUSTEMENT = l'utilisateur DONNE le stock constaté.
 9. produit_nom = le produit seul ("riz"), l'unité va dans unite ("sac"), jamais dans produit_nom.

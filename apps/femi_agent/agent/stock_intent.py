@@ -60,3 +60,13 @@ def is_stock_read(text: str) -> bool:
     if _QUESTION.search(t):
         return True
     return not _is_write(t)
+
+
+_VENTE = re.compile(r"\b(?:j'?ai\s+)?vendu(?:e|s|es)?\b|\bvente\s+(?:de|d')\s*\d")
+
+
+def looks_like_sale(text: str) -> bool:
+    """« j'ai vendu 5 sacs de riz », « vente de 10 bic » : une VENTE (compta),
+    pas un mouvement de stock. Exige un chiffre pour éviter « mes ventes ? »."""
+    t = _norm(text)
+    return bool(_VENTE.search(t)) and any(c.isdigit() for c in t)
