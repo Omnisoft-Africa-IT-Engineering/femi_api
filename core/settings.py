@@ -73,7 +73,15 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Bloque l'API quand l'abonnement est expiré (actif seulement si
+    # ABONNEMENT_OBLIGATOIRE=true).
+    "apps.femi_api.middleware_abonnement.AbonnementMiddleware",
 ]
+
+# Mettre à true (variable d'environnement Render) pour bloquer l'accès des
+# clients sans abonnement actif. À activer APRÈS avoir lancé
+# `python manage.py activer_essais` et rendu le paiement fonctionnel.
+ABONNEMENT_OBLIGATOIRE = config("ABONNEMENT_OBLIGATOIRE", default=False, cast=bool)
 
 
 # ============================================================

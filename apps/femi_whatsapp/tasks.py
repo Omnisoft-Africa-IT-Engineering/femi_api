@@ -15,6 +15,7 @@ import logging
 from celery import shared_task
 from django.core.files.base import ContentFile
 
+from apps.femi_account.abonnement import abonnement_actif, abonnement_obligatoire
 from apps.femi_account.models import Utilisateur
 from apps.femi_agent.agent.router_manager import FemiRouterManager
 from apps.femi_agent.agent.response_writer import write_natural_reply
@@ -73,6 +74,14 @@ def process_whatsapp_message_task(self, message: dict) -> None:
             from_number,
             "⚠️ Numéro non reconnu. Merci de contacter votre administrateur pour "
             "associer ce numéro à votre compte Femi.",
+        )
+        return
+
+    if abonnement_obligatoire() and not abonnement_actif(utilisateur.entreprise):
+        client.send_text_message(
+            from_number,
+            "🔒 Votre essai gratuit ou votre abonnement Femi a expiré. "
+            "Ouvrez l'application Femi et choisissez une offre pour continuer.",
         )
         return
 

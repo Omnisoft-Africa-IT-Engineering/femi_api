@@ -22,6 +22,7 @@ from apps.femi_api.views import (
     ConfigAPIView,
 )
 
+from apps.femi_api.views_abonnement import ProfilAbonnementAPIView
 from apps.femi_api.views_conversations import (
     ConversationListAPIView,
     ConversationMessagesAPIView,
@@ -66,6 +67,8 @@ urlpatterns = [
     path('bilan/synthese/', BilanSyntheseAPIView.as_view(), name='api_bilan_synthese'),
     path('config/', ConfigAPIView.as_view(), name='api_config'),
     path('health/', HealthCheckAPIView.as_view(), name='api_health'),
+    path('abonnement/', ProfilAbonnementAPIView.as_view(), name='api_abonnement'),
+    path('auth/profile/', ProfilAbonnementAPIView.as_view(), name='api_auth_profile'),
     path('auth/token/', LoginAPIView.as_view(), name='api_auth_token'),
     path('auth/register/', RegisterAPIView.as_view(), name='api_auth_register'),
     path('auth/logout/', LogoutAPIView.as_view(), name='api_auth_logout'),
