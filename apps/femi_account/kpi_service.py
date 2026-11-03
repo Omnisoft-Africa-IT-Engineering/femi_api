@@ -333,6 +333,11 @@ KPI_CALCULATEURS = {
     "Prestations": calc_nombre_prestations,
     "Heures facturées": calc_heures_facturees,
     "Marge par prestation": calc_marge_par_prestation,
+    # Finances personnelles
+    "Dépenses totales": calc_depenses,
+    "Épargne": calc_benefice,
+    "Taux d'épargne": calc_marge,
+    "Transactions": calc_nombre_transactions,
 }
 
 

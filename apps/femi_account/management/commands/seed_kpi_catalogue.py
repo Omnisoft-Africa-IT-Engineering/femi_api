@@ -72,10 +72,20 @@ NIVEAUX_KPI = {
 }
 
 KPI_PAR_SECTEUR = {
-    "Personnel": {
+    # Nom exact proposé par l'app à l'inscription (company_info_screen.dart).
+    # Uniquement des KPI qui ont un calculateur (KPI_CALCULATEURS) et qui ont
+    # du sens pour un particulier ; chaque niveau listé ici remplace le
+    # générique (donc plus de Ventes / Panier moyen / Clients).
+    "Finances personnelles": {
         1: [
-            ("Revenus", "💰"), ("Dépenses totales", "💸"), ("Dépenses par catégorie", "📊"),
-            ("Épargne", "🏦"), ("Taux d'épargne", "📈"), ("Budget restant vs objectif", "🎯"),
+            ("Revenus", "💰"), ("Dépenses totales", "💸"), ("Épargne", "🏦"),
+            ("Taux d'épargne", "📈"), ("Trésorerie", "💵"),
+        ],
+        2: [
+            ("Transactions", "🧾"),
+        ],
+        3: [
+            ("Dettes", "💳"), ("Prêts accordés", "🤝"),
         ],
     },
     "Commerce général": {
