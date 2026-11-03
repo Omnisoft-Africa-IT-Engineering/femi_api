@@ -15,3 +15,7 @@ python manage.py collectstatic --no-input
 
 # 4. Appliquer les migrations de base de données directement sur Supabase !
 python manage.py migrate
+
+# 5. Peupler le catalogue KPI (niveaux + KPI par secteur). Idempotent :
+#    peut tourner à chaque déploiement sans créer de doublons.
+python manage.py seed_kpi_catalogue
