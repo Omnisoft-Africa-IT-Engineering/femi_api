@@ -289,6 +289,14 @@ FEMI_VISION_PROVIDER = config(
     default=None
 )
 
+# Modèle vision de secours : utilisé seulement si FEMI_VISION_MODEL reste
+# surchargé (erreur 503/429) après les réessais. Même provider que la vision.
+# Laisser vide pour désactiver. Ex. définir un second modèle Gemini valide.
+FEMI_VISION_FALLBACK_MODEL = config(
+    "FEMI_VISION_FALLBACK_MODEL",
+    default=None
+)
+
 GEMINI_API_KEY = config(
     "GEMINI_API_KEY",
     default=None
