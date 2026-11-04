@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 
 STOCK_NUM_CTX = 4096
 
+# Seuil d'alerte appliqué à un produit créé sans seuil précisé : sans seuil
+# (0), le produit n'est jamais signalé avant la rupture. Un seuil de 0
+# explicitement demandé par l'utilisateur est respecté.
+SEUIL_ALERTE_PAR_DEFAUT = Decimal("5")
+
 QUESTIONS = {
     "produit_nom": "C'est pour quel produit ?",
     "quantite": "Quelle quantité ?",
@@ -242,11 +247,16 @@ class StockExecutor:
                 sku=extracted.sku or "",
                 unite=extracted.unite or "pièce",
                 prix_vente=Decimal(str(extracted.prix_vente or 0)),
-                seuil_alerte=Decimal(str(extracted.seuil_alerte or 0)),
+                seuil_alerte=(
+                    SEUIL_ALERTE_PAR_DEFAUT
+                    if extracted.seuil_alerte is None
+                    else Decimal(str(extracted.seuil_alerte))
+                ),
             )
             return (
                 f"Produit « {p.nom} » créé "
-                f"(unité : {p.unite}). Stock à 0 — ajoute une entrée si besoin."
+                f"(unité : {p.unite}, alerte à {p.seuil_alerte.normalize():f}). "
+                "Stock à 0 — ajoute une entrée si besoin."
             )
 
         # ENTREE / SORTIE / AJUSTEMENT

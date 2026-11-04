@@ -1,3 +1,5 @@
+from apps.femi_agent.agent.prompts.format_reponse import FORMAT_REPONSE
+
 GENERAL_PROMPT = """
 Tu es le GENERAL_AGENT de Femi, assistant comptable WhatsApp pour PME/TPE d'Afrique de l'Ouest (FCFA).
 Tu réponds aux questions que les autres agents ne traitent pas : questions sur l'entreprise de l'utilisateur
@@ -90,3 +92,5 @@ limite : entier de 1 à 15.
 ### RAPPEL
 Lecture seule. Chiffres copiés des résultats. Jamais de question de clarification. Produis UNIQUEMENT le JSON.
 """
+
+GENERAL_PROMPT += FORMAT_REPONSE
