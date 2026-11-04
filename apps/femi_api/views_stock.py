@@ -394,3 +394,74 @@ class MouvementListCreateAPIView(APIView):
             "produit": ProduitSerializer(mouvement.produit).data,
         }
         return Response(corps, status=status.HTTP_201_CREATED if cree else status.HTTP_200_OK)
+
+
+class StockOcrPreviewAPIView(APIView):
+    """POST multipart (champ `image`) : OCR stock sans écriture en base.
+
+    Réponse destinée au mobile pour préremplir le formulaire produit/mouvement.
+    """
+
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        entreprise, err = _entreprise_ou_erreur(request)
+        if err:
+            return err
+
+        fichier = request.FILES.get("image") or request.FILES.get("fichier")
+        if fichier is None:
+            return Response(
+                {"error": "Envoie une image (champ « image »)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        raw = fichier.read()
+        if not raw:
+            return Response(
+                {"error": "Fichier vide."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            from apps.femi_agent.agent.stock_ocr_executor import (
+                StockOcrExecutionError,
+                StockOcrExecutor,
+            )
+            from apps.femi_agent.parsers.document_loader import UnsupportedDocumentError
+
+            result = StockOcrExecutor.execute(raw)
+        except UnsupportedDocumentError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as exc:
+            logger.exception("[StockOcrPreview] échec OCR")
+            return Response(
+                {"error": "Impossible de lire l'image. Réessaie avec une photo plus nette."},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            )
+
+        data = result.model_dump()
+        # Enrichir : produit existant ?
+        from apps.femi_account.models import Produit
+
+        for ligne in data.get("lignes") or []:
+            nom = (ligne.get("nom") or "").strip()
+            sku = (ligne.get("sku") or "").strip()
+            existant = None
+            if sku:
+                existant = Produit.objects.filter(
+                    entreprise=entreprise, sku__iexact=sku, actif=True
+                ).first()
+            if existant is None and nom:
+                existant = Produit.objects.filter(
+                    entreprise=entreprise, nom__iexact=nom, actif=True
+                ).first()
+            ligne["produit_existant_id"] = str(existant.pk) if existant else None
+            ligne["produit_existant_nom"] = existant.nom if existant else None
+            ligne["stock_actuel"] = float(existant.stock_actuel) if existant else None
+
+        data["message"] = (
+            "Champs proposés à partir de la photo. Vérifie puis valide le formulaire."
+        )
+        return Response(data, status=status.HTTP_200_OK)

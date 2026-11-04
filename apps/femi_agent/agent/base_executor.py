@@ -19,9 +19,11 @@ Quand `images` est None (comportement historique, tous les autres agents),
 le message "user" reste une simple chaîne de texte, inchangé.
 """
 
+import asyncio
 import json
 import logging
 import re
+import time
 from django.conf import settings
 from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import PydanticOutputParser
@@ -46,6 +48,33 @@ def _resolve_vision_provider() -> str:
     return getattr(
         settings, "FEMI_VISION_PROVIDER", None
     ) or getattr(settings, "FEMI_LLM_PROVIDER", "ollama")
+
+# Erreurs passagères du fournisseur (surcharge, quota) : on réessaie avec une
+# pause plutôt que d'échouer tout de suite (ex. Gemini « 503 UNAVAILABLE —
+# high demand »). 3 essais au total, pauses de 2 s puis 5 s.
+_LLM_MAX_ATTEMPTS = 3
+_LLM_RETRY_DELAYS = (2.0, 5.0)
+_TRANSIENT_CODES = {429, 500, 502, 503, 504}
+_TRANSIENT_MARKERS = (
+    "UNAVAILABLE", "RESOURCE_EXHAUSTED", "high demand", "overloaded",
+    "Too Many Requests",
+)
+
+
+def _is_transient_llm_error(exc: BaseException | None) -> bool:
+    """Vrai si l'erreur (ou sa cause) est une surcharge/quota temporaire."""
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+        if isinstance(code, int) and code in _TRANSIENT_CODES:
+            return True
+        text = str(exc)
+        if any(marker in text for marker in _TRANSIENT_MARKERS):
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
+
 
 _FALLBACK_FORMAT_SUFFIX = (
     "\n\n### FORMAT DE SORTIE (STRICT)\n"
@@ -190,6 +219,50 @@ class StructuredLLMExecutor:
         logger.exception("[%s] Échec critique (API native Cloudflare vision, %d essais)", log_prefix, MAX_ATTEMPTS)
         raise error_cls(f"Erreur d'exécution ({log_prefix}) : aucun essai n'a produit de résultat exploitable après {MAX_ATTEMPTS} tentatives")
     @staticmethod
+    def _fallback_vision_model(model_name: str | None, images) -> str | None:
+        """Modèle vision de secours (settings.FEMI_VISION_FALLBACK_MODEL),
+        utilisé seulement si le modèle principal reste surchargé après les
+        réessais. None si non configuré ou identique au modèle principal."""
+        if not images:
+            return None
+        fallback = getattr(settings, "FEMI_VISION_FALLBACK_MODEL", None)
+        if not fallback or fallback == model_name:
+            return None
+        return fallback
+
+    @staticmethod
+    def _invoke_with_retry(structured_llm, messages, log_prefix: str):
+        """invoke() avec réessais sur erreur passagère du fournisseur."""
+        for attempt in range(1, _LLM_MAX_ATTEMPTS + 1):
+            try:
+                return structured_llm.invoke(messages)
+            except Exception as e:
+                if attempt >= _LLM_MAX_ATTEMPTS or not _is_transient_llm_error(e):
+                    raise
+                delay = _LLM_RETRY_DELAYS[attempt - 1]
+                logger.warning(
+                    "[%s] Fournisseur indisponible (essai %d/%d), nouvel essai dans %.0f s",
+                    log_prefix, attempt, _LLM_MAX_ATTEMPTS, delay,
+                )
+                time.sleep(delay)
+
+    @staticmethod
+    async def _ainvoke_with_retry(structured_llm, messages, log_prefix: str):
+        """ainvoke() avec réessais sur erreur passagère du fournisseur."""
+        for attempt in range(1, _LLM_MAX_ATTEMPTS + 1):
+            try:
+                return await structured_llm.ainvoke(messages)
+            except Exception as e:
+                if attempt >= _LLM_MAX_ATTEMPTS or not _is_transient_llm_error(e):
+                    raise
+                delay = _LLM_RETRY_DELAYS[attempt - 1]
+                logger.warning(
+                    "[%s] Fournisseur indisponible (essai %d/%d), nouvel essai dans %.0f s",
+                    log_prefix, attempt, _LLM_MAX_ATTEMPTS, delay,
+                )
+                await asyncio.sleep(delay)
+
+    @staticmethod
     def _structured_output_kwargs(llm) -> dict:
         """Certains providers (ex. Groq avec openai/gpt-oss-*) échouent avec
         method="function_calling" (défaut de LangChain) — "Tool choice is
@@ -249,7 +322,25 @@ class StructuredLLMExecutor:
                 {"role": "system", "content": prompt_text},
                 {"role": "user", "content": StructuredLLMExecutor._build_user_content(message_text, images)},
             ]
-            return structured_llm.invoke(messages)
+            try:
+                return StructuredLLMExecutor._invoke_with_retry(structured_llm, messages, log_prefix)
+            except Exception as transient_err:
+                fallback_model = StructuredLLMExecutor._fallback_vision_model(model_name, images)
+                if not fallback_model or not _is_transient_llm_error(transient_err):
+                    raise
+                logger.warning(
+                    "[%s] Modèle %s toujours indisponible, bascule sur le modèle de secours %s",
+                    log_prefix, model_name, fallback_model,
+                )
+                fallback_llm = get_llm(
+                    model_name=fallback_model,
+                    num_ctx=num_ctx,
+                    provider=vision_provider,
+                )
+                fallback_structured = fallback_llm.with_structured_output(
+                    output_schema, **StructuredLLMExecutor._structured_output_kwargs(fallback_llm)
+                )
+                return fallback_structured.invoke(messages)
 
         except (OutputParserException, ValidationError) as parse_err:
             logger.warning(
@@ -293,7 +384,25 @@ class StructuredLLMExecutor:
                 {"role": "system", "content": prompt_text},
                 {"role": "user", "content": StructuredLLMExecutor._build_user_content(message_text, images)},
             ]
-            return await structured_llm.ainvoke(messages)
+            try:
+                return await StructuredLLMExecutor._ainvoke_with_retry(structured_llm, messages, log_prefix)
+            except Exception as transient_err:
+                fallback_model = StructuredLLMExecutor._fallback_vision_model(model_name, images)
+                if not fallback_model or not _is_transient_llm_error(transient_err):
+                    raise
+                logger.warning(
+                    "[%s] Modèle %s toujours indisponible (async), bascule sur le modèle de secours %s",
+                    log_prefix, model_name, fallback_model,
+                )
+                fallback_llm = get_llm(
+                    model_name=fallback_model,
+                    num_ctx=num_ctx,
+                    provider=vision_provider,
+                )
+                fallback_structured = fallback_llm.with_structured_output(
+                    output_schema, **StructuredLLMExecutor._structured_output_kwargs(fallback_llm)
+                )
+                return await fallback_structured.ainvoke(messages)
 
         except (OutputParserException, ValidationError) as parse_err:
             logger.warning(

@@ -1,3 +1,5 @@
+from apps.femi_agent.agent.prompts.format_reponse import FORMAT_REPONSE
+
 FINANCIAL_ANALYST_PROMPT = """
 Tu es le FINANCIAL_ANALYST_AGENT de Femi.
 Tu analyses UNIQUEMENT les données financières AGRÉGÉES de l'entreprise.
@@ -46,3 +48,5 @@ Périodes : aujourd'hui | hier | cette_semaine | semaine_derniere | ce_mois | mo
 ### RAPPEL
 Mémoire d'abord. Produis UNIQUEMENT le JSON.
 """
+
+FINANCIAL_ANALYST_PROMPT += FORMAT_REPONSE

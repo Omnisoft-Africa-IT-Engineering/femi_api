@@ -17,6 +17,7 @@ from apps.femi_agent.agent.customer_executor import CustomerExecutor
 from apps.femi_agent.agent.financial_analyst_executor import FinancialAnalystExecutor
 from apps.femi_agent.agent.general_executor import GeneralExecutor
 from apps.femi_agent.agent.quote_executor import QuoteExecutor
+from apps.femi_agent.agent.stock_executor import StockExecutor
 from apps.femi_agent.schemas import (
     AccountingExtractionResult,
     AccountingModifyProposeChangeResult,
@@ -48,6 +49,7 @@ _AGENTS_NEED_HISTORY = {
     "ACCOUNTING",
     "FINANCIAL_ANALYST",
     "GENERAL",
+    "STOCK",
 }
 
 
@@ -110,6 +112,12 @@ def dispatch_intent(
         result = QuoteExecutor.execute(text, entreprise)
         return result, result.needs_clarification
 
+    if intent.agent == "STOCK":
+        result = StockExecutor.execute(text, entreprise)
+        # FinalAnswerOutput : pas de clarification structurée agent
+        return result, False
+
+
     if intent.agent == "GENERAL":
         # Lecture seule, ne clarifie jamais : résultat toujours un FinalAnswerOutput.
         result = GeneralExecutor.execute(text, entreprise)
@@ -157,6 +165,11 @@ async def adispatch_intent(
     if intent.agent == "QUOTE":
         result = await QuoteExecutor.aexecute(text, entreprise)
         return result, result.needs_clarification
+
+    if intent.agent == "STOCK":
+        result = await StockExecutor.aexecute(text, entreprise)
+        return result, False
+
 
     if intent.agent == "GENERAL":
         result = await GeneralExecutor.aexecute(text, entreprise)

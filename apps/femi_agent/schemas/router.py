@@ -23,6 +23,7 @@ RouterAgent = Literal[
     "FINANCIAL_ANALYST",
     "CUSTOMER",
     "QUOTE",
+    "STOCK",
     "GENERAL",
     "SETTINGS",
     "UNKNOWN",

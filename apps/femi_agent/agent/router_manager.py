@@ -64,6 +64,13 @@ from apps.femi_agent.agent.conversation_manager import (
 )
 from apps.femi_agent.agent.pending_action import PendingTurn
 from apps.femi_agent.agent.tools.operations import apply_operation_change, list_recent_operations
+from apps.femi_agent.agent.stock_sale_link import (
+    annuler_dernier_decompte,
+    appliquer_sortie_vente,
+    est_confirmation_sortie,
+    est_demande_annulation_decompte,
+    traiter_vente_stock,
+)
 from apps.femi_agent.agent.social_replies import (
     build_off_topic_reply,
     build_social_reply,
@@ -173,6 +180,74 @@ class RouterInputError(Exception):
     pass
 
 
+
+
+def _message_looks_like_stock(text: str) -> bool:
+    """Vocabulaire stock explicite ou « j'ai reçu / ajoute » + quantité + unité."""
+    from apps.femi_agent.agent.stock_intent import looks_like_stock
+
+    return looks_like_stock(text)
+
+
+def _force_stock_intent_if_needed(intents, message_text: str):
+    """Si le message est clairement stock, force agent STOCK.
+
+    Une VENTE (« j'ai vendu 5 sacs de riz à 3000 ») n'est pas un mouvement de
+    stock : elle doit passer par la compta (registre) ; le stock est ensuite
+    décompté par stock_sale_link. Si le routeur l'a envoyée en STOCK, on la
+    remet en ACCOUNTING, sauf vocabulaire stock explicite (« en stock », …).
+    """
+    if not intents:
+        return intents
+    try:
+        from apps.femi_agent.schemas.router import RouterIntent
+    except Exception:
+        return intents
+    from apps.femi_agent.agent.stock_intent import is_stock_read, looks_like_sale
+
+    if looks_like_sale(message_text) and not _message_looks_like_stock(message_text):
+        remis = []
+        for intent in intents:
+            if getattr(intent, "agent", None) == "STOCK":
+                data = intent.model_dump() if hasattr(intent, "model_dump") else dict(intent)
+                data["agent"] = "ACCOUNTING"
+                data["action_type"] = "CREATE"
+                data["needs_clarification"] = False
+                data["missing_fields"] = []
+                try:
+                    remis.append(RouterIntent(**data))
+                    continue
+                except Exception:
+                    pass
+            remis.append(intent)
+        return remis
+
+    if not _message_looks_like_stock(message_text):
+        return intents
+
+    fixed = []
+    for intent in intents:
+        if getattr(intent, "agent", None) in (
+            "ACCOUNTING", "ACCOUNTING_MODIFY", "UNKNOWN", "GENERAL",
+        ):
+            data = intent.model_dump() if hasattr(intent, "model_dump") else dict(intent)
+            data["agent"] = "STOCK"
+            if is_stock_read(message_text):
+                data["action_type"] = "READ"
+            else:
+                data["action_type"] = "CREATE"
+            data["merge_context"] = False
+            data["needs_clarification"] = False
+            data["missing_fields"] = []
+            try:
+                fixed.append(RouterIntent(**data))
+            except Exception:
+                fixed.append(intent)
+        else:
+            fixed.append(intent)
+    return fixed
+
+
 class FemiRouterManager:
     """
     Gestionnaire central du nouveau pipeline :
@@ -276,6 +351,15 @@ class FemiRouterManager:
                 history=history_text,
                 **pending.router_kwargs(),
             )
+            try:
+                forced = _force_stock_intent_if_needed(
+                    list(router_output.intents), combined_text
+                )
+                if forced is not router_output.intents:
+                    router_output = router_output.model_copy(update={"intents": forced})
+            except Exception:
+                logger.exception("[FemiRouterManager] force STOCK ignoré")
+
 
             # Force merge si réponse courte à une action en attente
             # (ex. "Mr Toto" après "pour quel client ce devis ?")
@@ -284,9 +368,13 @@ class FemiRouterManager:
                 combined_text,
             )
 
-            early_msg = await sync_to_async(cls._try_handle_modify_confirmation)(
-                pending, combined_text, entreprise
+            early_msg = await sync_to_async(cls._try_handle_undo_stock)(
+                combined_text, entreprise, utilisateur
             )
+            if early_msg is None:
+                early_msg = await sync_to_async(cls._try_handle_modify_confirmation)(
+                    pending, combined_text, entreprise, utilisateur
+                )
             if early_msg is None:
                 early_msg = await sync_to_async(cls._try_handle_list_operations)(
                     combined_text, entreprise
@@ -535,6 +623,15 @@ class FemiRouterManager:
                 history=history_text,
                 **pending.router_kwargs(),
             )
+            # Messages stock → agent STOCK (évite dépense compta fantôme)
+            try:
+                forced = _force_stock_intent_if_needed(
+                    list(router_output.intents), combined_text
+                )
+                if forced is not router_output.intents:
+                    router_output = router_output.model_copy(update={"intents": forced})
+            except Exception:
+                logger.exception("[FemiRouterManager] force STOCK ignoré")
 
             # Force merge si réponse courte à une action en attente
             # (ex. "Mr Toto" après "pour quel client ce devis ?")
@@ -543,9 +640,13 @@ class FemiRouterManager:
                 combined_text,
             )
 
-            early_msg = cls._try_handle_modify_confirmation(
-                pending, combined_text, entreprise
+            early_msg = cls._try_handle_undo_stock(
+                combined_text, entreprise, utilisateur
             )
+            if early_msg is None:
+                early_msg = cls._try_handle_modify_confirmation(
+                    pending, combined_text, entreprise, utilisateur
+                )
             if early_msg is None:
                 early_msg = cls._try_handle_list_operations(
                     combined_text, entreprise
@@ -1399,6 +1500,13 @@ class FemiRouterManager:
 
 
     @staticmethod
+    def _ajouter_proposition_stock(message: str, proposition: Optional[str]) -> str:
+        """Ajoute la question « je décompte aussi du stock ? » sous la réponse."""
+        if not proposition:
+            return message
+        return f"{message}\n\n{proposition}" if message else proposition
+
+    @staticmethod
     def _is_affirmative(text: str) -> bool:
         t = (text or "").strip().lower()
         return t in {
@@ -1416,13 +1524,21 @@ class FemiRouterManager:
         }
 
     @classmethod
+    def _try_handle_undo_stock(cls, raw_text: str, entreprise, utilisateur=None) -> str | None:
+        """« annule le décompte » : remet en stock le dernier décompte de vente."""
+        if not est_demande_annulation_decompte(raw_text):
+            return None
+        return annuler_dernier_decompte(entreprise, utilisateur)
+
+    @classmethod
     def _try_handle_modify_confirmation(
         cls,
         pending: Optional[PendingTurn],
         raw_text: str,
         entreprise,
+        utilisateur=None,
     ) -> str | None:
-        """Si pending = proposition UPDATE/DELETE et message = oui/non, applique."""
+        """Si pending = proposition UPDATE/DELETE (ou décompte de stock) et message = oui/non, applique."""
         if pending is None or not hasattr(pending, "has_confirmation"):
             return None
         if not pending.has_confirmation():
@@ -1433,6 +1549,10 @@ class FemiRouterManager:
         entry = pending.pop_confirmation()
         if not entry:
             return None
+        if est_confirmation_sortie(entry):
+            if cls._is_negative(text):
+                return "D'accord, je ne touche pas au stock."
+            return appliquer_sortie_vente(entreprise, entry, utilisateur)
         if cls._is_negative(text):
             return "D'accord, je n'ai rien modifié."
         result = apply_operation_change(
@@ -1767,7 +1887,10 @@ class FemiRouterManager:
                         intent,
                         segment,
                         doc_flag,
-                        bool(dispatch_needs_clarification)
+                        (
+                            bool(dispatch_needs_clarification)
+                            or bool(getattr(result, "awaiting_user", False))
+                        )
                         and result is not None,
                         getattr(result, "missing_fields", None),
                     )
@@ -2013,6 +2136,7 @@ class FemiRouterManager:
         # ========================================================
 
         operation_ids: list[str] = []
+        stock_proposal: Optional[str] = None
 
         if clean_accounting_results:
 
@@ -2112,6 +2236,23 @@ class FemiRouterManager:
                         for operation in operations
                     ]
 
+                    try:
+                        stock_proposal = traiter_vente_stock(
+                            entreprise,
+                            operations,
+                            (
+                                pending.effective_raw_text(raw_text)
+                                if pending is not None
+                                else raw_text
+                            ),
+                            pending,
+                            utilisateur,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "[FemiRouterManager] proposition de décompte stock ignorée"
+                        )
+
                     logger.info(
                         "[FemiRouterManager] "
                         ">>> OPERATION IDS=%s",
@@ -2198,7 +2339,8 @@ class FemiRouterManager:
 
         return RouterProcessResult(
             success=True,
-            message=cls._build_final_message(
+            message=cls._ajouter_proposition_stock(
+                cls._build_final_message(
                 accounting_results=accounting_results,
                 financial_analyst_results=financial_analyst_results,
                 accounting_modify_results=accounting_modify_results,
@@ -2208,6 +2350,8 @@ class FemiRouterManager:
                 needs_clarification=needs_clarification,
                 missing_fields=missing_fields,
                 user_message=raw_text,
+                ),
+                stock_proposal,
             ),
             router_output=router_output,
             operation_ids=operation_ids,
@@ -2541,7 +2685,10 @@ class FemiRouterManager:
                     intent,
                     segment,
                     doc_flag,
-                    bool(dispatch_needs_clarification)
+                    (
+                        bool(dispatch_needs_clarification)
+                        or bool(getattr(result, "awaiting_user", False))
+                    )
                     and result is not None,
                     getattr(result, "missing_fields", None),
                 )
@@ -2637,6 +2784,7 @@ class FemiRouterManager:
         ]
 
         operation_ids: list[str] = []
+        stock_proposal: Optional[str] = None
 
         if (
             valid_accounting_results
@@ -2665,6 +2813,23 @@ class FemiRouterManager:
                 for operation in operations
             ]
 
+            try:
+                stock_proposal = await sync_to_async(traiter_vente_stock)(
+                    entreprise,
+                    operations,
+                    (
+                        pending.effective_raw_text(raw_text)
+                        if pending is not None
+                        else raw_text
+                    ),
+                    pending,
+                    utilisateur,
+                )
+            except Exception:
+                logger.exception(
+                    "[FemiRouterManager] proposition de décompte stock ignorée"
+                )
+
         # --------------------------------------------------------
         # Création des devis (QUOTE)
         # --------------------------------------------------------
@@ -2681,7 +2846,8 @@ class FemiRouterManager:
 
         return RouterProcessResult(
             success=True,
-            message=cls._build_final_message(
+            message=cls._ajouter_proposition_stock(
+                cls._build_final_message(
                 accounting_results=accounting_results,
                 financial_analyst_results=financial_analyst_results,
                 accounting_modify_results=accounting_modify_results,
@@ -2691,6 +2857,8 @@ class FemiRouterManager:
                 needs_clarification=needs_clarification,
                 missing_fields=missing_fields,
                 user_message=raw_text,
+                ),
+                stock_proposal,
             ),
             router_output=router_output,
             operation_ids=operation_ids,

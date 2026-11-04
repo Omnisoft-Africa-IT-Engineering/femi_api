@@ -161,7 +161,10 @@ class PendingTurn:
 
         Ne dépend plus uniquement du LLM pour la fusion multi-tour.
         """
-        if not self.entries or not intents:
+        # Les entrées « en attente de oui/non » ne servent pas à fusionner un
+        # message court : seules les clarifications (champ manquant) le font.
+        clarifications = [e for e in self.entries if not e.get("awaiting_confirmation")]
+        if not clarifications or not intents:
             return
 
         text = (message_text or "").strip()
@@ -187,6 +190,9 @@ class PendingTurn:
 
         # Nouveau sujet clair → ne pas coller l'ancien pending
         new_topic_markers = (
+            "entrée stock", "entree stock", "sortie stock",
+            "en stock", "mon stock", "réappro", "reappro", "inventaire",
+
             "impay", "creanc", "créanc", "qui me doit", "a qui je dois",
             "à qui je dois", "chiffre d'affaire", "chiffre d affaire",
             "mon ca", "mon chiffre", "benefice", "bénéfice", "tresorerie",
@@ -196,7 +202,24 @@ class PendingTurn:
             "depense de", "dépense de", "bonjour", "salut", "bonsoir",
             "quelle sont", "quelles sont", "quels sont",
         )
-        is_new_topic = any(m in normalized for m in new_topic_markers)
+        from apps.femi_agent.agent.stock_intent import looks_like_stock
+
+        pending_is_stock = clarifications[0].get("agent") == "STOCK"
+        stock_markers = (
+            "entrée stock", "entree stock", "sortie stock",
+            "en stock", "mon stock", "réappro", "reappro", "inventaire",
+        )
+        if pending_is_stock:
+            # Réponse à une question stock (« 20 », « riz ») : on ne coupe
+            # que sur un sujet non-stock.
+            is_new_topic = any(
+                m in normalized for m in new_topic_markers if m not in stock_markers
+            )
+        else:
+            is_new_topic = (
+                any(m in normalized for m in new_topic_markers)
+                or looks_like_stock(text)
+            )
         if is_new_topic and not is_forget:
             logger.info(
                 "[pending_action] force_merge ignoré (nouveau sujet): %r",
@@ -209,7 +232,7 @@ class PendingTurn:
         if not is_short:
             return
 
-        entry = self.entries[0]
+        entry = clarifications[0]
         pending_agent = entry.get("agent")
         if not pending_agent:
             return

@@ -1,3 +1,5 @@
+from apps.femi_agent.agent.prompts.format_reponse import FORMAT_REPONSE
+
 CUSTOMER_PROMPT = """
 Tu es le CUSTOMER_AGENT de Femi.
 Tu gères les consultations et opérations liées aux CLIENTS, FOURNISSEURS et CRÉANCES.
@@ -118,3 +120,5 @@ Pour get_impayes : résume total_general, total_en_retard, puis les contacts ave
 Questions « qui me doit / à qui je dois / créanciers / débiteurs » = READ immédiat, zéro clarification vente/achat.
 Produis UNIQUEMENT le JSON.
 """
+
+CUSTOMER_PROMPT += FORMAT_REPONSE

@@ -1,3 +1,4 @@
+import html
 import logging
 
 from rest_framework.views import APIView
@@ -53,7 +54,11 @@ class AgentChatAPIView(APIView):
             return Response(
                 {
                     "success": result.success,
-                    "message": result.message,
+                    "message": (
+                        html.unescape(result.message)
+                        if isinstance(result.message, str)
+                        else result.message
+                    ),
                     "needs_clarification": result.needs_clarification,
                     "missing_fields": result.missing_fields,
                     "operation_ids": result.operation_ids,

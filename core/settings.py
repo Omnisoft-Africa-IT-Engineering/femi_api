@@ -73,7 +73,15 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Bloque l'API quand l'abonnement est expiré (actif seulement si
+    # ABONNEMENT_OBLIGATOIRE=true).
+    "apps.femi_api.middleware_abonnement.AbonnementMiddleware",
 ]
+
+# Mettre à true (variable d'environnement Render) pour bloquer l'accès des
+# clients sans abonnement actif. À activer APRÈS avoir lancé
+# `python manage.py activer_essais` et rendu le paiement fonctionnel.
+ABONNEMENT_OBLIGATOIRE = config("ABONNEMENT_OBLIGATOIRE", default=False, cast=bool)
 
 
 # ============================================================
@@ -278,6 +286,14 @@ FEMI_VISION_MODEL = config(
 # (ex. "gemini-2.5-flash").
 FEMI_VISION_PROVIDER = config(
     "FEMI_VISION_PROVIDER",
+    default=None
+)
+
+# Modèle vision de secours : utilisé seulement si FEMI_VISION_MODEL reste
+# surchargé (erreur 503/429) après les réessais. Même provider que la vision.
+# Laisser vide pour désactiver. Ex. définir un second modèle Gemini valide.
+FEMI_VISION_FALLBACK_MODEL = config(
+    "FEMI_VISION_FALLBACK_MODEL",
     default=None
 )
 

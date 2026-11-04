@@ -15,3 +15,12 @@ python manage.py collectstatic --no-input
 
 # 4. Appliquer les migrations de base de données directement sur Supabase !
 python manage.py migrate
+
+# 5. Peupler le catalogue KPI (niveaux + KPI par secteur). Idempotent :
+#    peut tourner à chaque déploiement sans créer de doublons.
+python manage.py seed_kpi_catalogue
+
+
+# 6. Peupler les offres (Micro, Pro, Business). Idempotent (update_or_create) :
+#    NÉCESSAIRE pour que l'essai gratuit trouve le plan Micro.
+python seed_plans.py

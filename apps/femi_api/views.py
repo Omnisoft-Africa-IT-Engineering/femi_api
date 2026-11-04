@@ -17,6 +17,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.femi_agent.agent.router_manager import FemiRouterManager
+from apps.femi_agent.agent.stock_chat_photo import build_stock_photo_response
 from apps.femi_agent.parsers.audio_parser import transcribe_audio
 
 # Importations DRF-Spectacular pour Swagger OAS 3.0
@@ -88,6 +89,23 @@ class ProcessTransactionAPIView(APIView):
         
         audio_file = data.get("audio")
         audio_bytes = audio_file.read() if audio_file else None
+
+        # Photo chat → stock : si OCR stock fiable, ouvrir le formulaire
+        # (pas d'écriture auto). Sinon pipeline compta / router habituel.
+        if image_bytes:
+            try:
+                entreprise = getattr(request.user, "entreprise", None)
+                stock_ui = build_stock_photo_response(
+                    image_bytes,
+                    entreprise=entreprise,
+                    message_text=data.get("text"),
+                )
+            except Exception:
+                logger = logging.getLogger(__name__)
+                logger.exception("[ProcessTransaction] stock photo preview")
+                stock_ui = None
+            if stock_ui:
+                return Response(stock_ui, status=status.HTTP_200_OK)
 
         # Appel au nouveau pipeline unifié (Router + Agents spécialisés)
         result = FemiRouterManager.route_message(

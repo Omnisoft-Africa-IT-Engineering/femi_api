@@ -22,6 +22,7 @@ from apps.femi_api.views import (
     ConfigAPIView,
 )
 
+from apps.femi_api.views_abonnement import ProfilAbonnementAPIView
 from apps.femi_api.views_conversations import (
     ConversationListAPIView,
     ConversationMessagesAPIView,
@@ -38,6 +39,7 @@ from apps.femi_api.views_devis import (
 from apps.femi_api.views_stock import (
     ImportProduitsAPIView,
     ModeleImportProduitsAPIView,
+    StockOcrPreviewAPIView,
     MouvementListCreateAPIView,
     ProduitDetailAPIView,
     ProduitListCreateAPIView,
@@ -65,6 +67,8 @@ urlpatterns = [
     path('bilan/synthese/', BilanSyntheseAPIView.as_view(), name='api_bilan_synthese'),
     path('config/', ConfigAPIView.as_view(), name='api_config'),
     path('health/', HealthCheckAPIView.as_view(), name='api_health'),
+    path('abonnement/', ProfilAbonnementAPIView.as_view(), name='api_abonnement'),
+    path('auth/profile/', ProfilAbonnementAPIView.as_view(), name='api_auth_profile'),
     path('auth/token/', LoginAPIView.as_view(), name='api_auth_token'),
     path('auth/register/', RegisterAPIView.as_view(), name='api_auth_register'),
     path('auth/logout/', LogoutAPIView.as_view(), name='api_auth_logout'),
@@ -93,6 +97,7 @@ urlpatterns = [
     path('stock/produits/modele/', ModeleImportProduitsAPIView.as_view(), name='api_stock_modele'),
     path('stock/produits/<uuid:pk>/', ProduitDetailAPIView.as_view(), name='api_stock_produit_detail'),
     path('stock/mouvements/', MouvementListCreateAPIView.as_view(), name='api_stock_mouvements'),
+    path('stock/ocr-preview/', StockOcrPreviewAPIView.as_view(), name='api_stock_ocr_preview'),
     path('devis/<int:pk>/', DevisDetailAPIView.as_view(), name='api_devis_detail'),
     path('devis/<int:pk>/lignes/', DevisLignesAPIView.as_view(), name='api_devis_lignes'),
     path('devis/<int:pk>/lignes/<int:ligne_id>/', DevisLigneDetailAPIView.as_view(), name='api_devis_ligne_detail'),
