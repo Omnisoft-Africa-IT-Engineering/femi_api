@@ -95,7 +95,9 @@ KPI_PAR_SECTEUR = {
         ],
         2: [
             ("Ventes", "🛒"), ("Panier moyen", "🧺"), ("Clients", "👥"),
-            ("Produits vendus", "📦"), ("Produits les plus vendus", "🏆"), ("Ruptures de stock", "⚠️"),
+            ("Produits", "📦"), ("Valeur du stock", "🏬"), ("Ruptures de stock", "⚠️"),
+            ("Alertes de stock", "🔔"),
+            ("Produits vendus", "🛍️"), ("Produits les plus vendus", "🏆"),
         ],
     },
     "Services": {

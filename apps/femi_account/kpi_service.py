@@ -33,6 +33,7 @@ from django.db.models import Count, F, Q, Sum
 from django.utils import timezone
 
 from .models import Operation, PrestationRealisee
+from .stock_service import resume_stock
 from .soldes_ouverts import (
     total_creances_ouvertes,
     total_dettes_fournisseurs_ouvertes,
@@ -232,6 +233,29 @@ def calc_nombre_transactions(ctx):
     return ctx.flux["nb_transactions"] or 0
 
 
+def _resume_stock(ctx):
+    """Chiffres clés du stock, calculés une seule fois par requête KPI."""
+    if getattr(ctx, "_resume_stock_cache", None) is None:
+        ctx._resume_stock_cache = resume_stock(ctx.entreprise)
+    return ctx._resume_stock_cache
+
+
+def calc_nombre_produits(ctx):
+    return _resume_stock(ctx)["nombre_produits"]
+
+
+def calc_valeur_stock(ctx):
+    return float(_resume_stock(ctx)["valeur_stock"])
+
+
+def calc_ruptures_stock(ctx):
+    return _resume_stock(ctx)["nb_ruptures"]
+
+
+def calc_alertes_stock(ctx):
+    return _resume_stock(ctx)["nb_alertes"]
+
+
 def calc_tresorerie(ctx):
     """Argent réellement encaissé - réellement décaissé, prêts inclus."""
     s = ctx.soldes
@@ -338,6 +362,12 @@ KPI_CALCULATEURS = {
     "Épargne": calc_benefice,
     "Taux d'épargne": calc_marge,
     "Transactions": calc_nombre_transactions,
+    # Produits / stock
+    "Produits": calc_nombre_produits,
+    "Stocks": calc_valeur_stock,
+    "Valeur du stock": calc_valeur_stock,
+    "Ruptures de stock": calc_ruptures_stock,
+    "Alertes de stock": calc_alertes_stock,
 }
 
 

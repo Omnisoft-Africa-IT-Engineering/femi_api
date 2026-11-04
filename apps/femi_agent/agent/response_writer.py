@@ -19,6 +19,8 @@ Garanties (voir write_natural_reply) :
 
 from __future__ import annotations
 
+import html
+
 import logging
 import random
 import re
@@ -216,7 +218,9 @@ def _clean(raw) -> str:
             part.get("text", "") if isinstance(part, dict) else str(part)
             for part in text
         )
-    return (text or "").strip().strip('"').strip("'").strip()
+    # Certains modèles renvoient du texte « échappé » (&apos; &eacute; &#128522;) :
+    # on le décode pour que le client lise « l'assistant », pas « l&apos;assistant ».
+    return html.unescape(text or "").strip().strip('"').strip("'").strip()
 
 
 def write_natural_reply(
